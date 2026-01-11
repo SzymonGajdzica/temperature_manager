@@ -364,26 +364,26 @@ VentConfig ventConfig = VentConfig();
 struct HumiditySensor {
   private:
   DHT dht;
-  float lastReadHumidity = NAN;
-  float lastGoodReadHumidity = NAN;
-  time_t lastReadHumidityTime = 0;
-  time_t lastGoodReadHumidityTime = 0;
+  float lastReadHumidity;
+  float lastGoodReadHumidity;
+  time_t lastReadHumidityTime;
+  time_t lastGoodReadHumidityTime;
 
   float readHumidity() {
     delay(2000);
     float humidity = dht.readHumidity();
-    time_t time = DateTime.getTime();
-    lastReadHumidityTime = millis();
+    time_t mTime = DateTime.getTime();
+    lastReadHumidityTime = mTime;
     lastReadHumidity = humidity;
     if (isHumidityValid(humidity)) {
       lastGoodReadHumidity = humidity;
-      lastGoodReadHumidityTime = time;
+      lastGoodReadHumidityTime = mTime;
     }
     return humidity;
   }
 
   public:
-  HumiditySensor(uint8_t pin) : dht(pin, DHT22) {}
+  HumiditySensor(uint8_t pin) : dht(pin, DHT22), lastReadHumidity(NAN), lastGoodReadHumidity(NAN), lastReadHumidityTime(0), lastGoodReadHumidityTime(0) {}
   ~HumiditySensor() {}
 
   void begin() {
@@ -391,7 +391,7 @@ struct HumiditySensor {
   }
 
   float getLastHumidity() {
-    return dht.readHumidity();
+    return lastReadHumidity;
   }
 
   float getLastGoodHumidity() {
@@ -425,27 +425,27 @@ struct TemperatureSensor {
   private:
   OneWire oneWire;
   DallasTemperature sensors;
-  float lastReadTemperature = NAN;
-  float lastGoodReadTemperature = NAN;
-  time_t lastReadTemperatureTime = 0;
-  time_t lastGoodReadTemperatureTime = 0;
+  float lastReadTemperature;
+  float lastGoodReadTemperature;
+  time_t lastReadTemperatureTime;
+  time_t lastGoodReadTemperatureTime;
 
   float readTemperature() {
     delay(100);
     sensors.requestTemperatures(); 
     float temperature = sensors.getTempCByIndex(0);
-    time_t time = DateTime.getTime();
-    lastReadTemperatureTime = millis();
+    time_t mTime = DateTime.getTime();
+    lastReadTemperatureTime = mTime;
     lastReadTemperature = temperature;
     if (isTemperatureValid(temperature)) {
       lastGoodReadTemperature = temperature;
-      lastGoodReadTemperatureTime = time;
+      lastGoodReadTemperatureTime = mTime;
     }
     return temperature;
   }
 
   public:
-  TemperatureSensor(uint8_t pin) : oneWire(pin), sensors(&oneWire) {}
+  TemperatureSensor(uint8_t pin) : oneWire(pin), sensors(&oneWire), lastReadTemperature(NAN), lastGoodReadTemperature(NAN), lastReadTemperatureTime(0), lastGoodReadTemperatureTime(0) {}
   ~TemperatureSensor() {}
 
   void begin() {
@@ -1211,6 +1211,7 @@ struct VentManager {
   }
 
   void invalidate() {
+    println("Invalidating vent manager1");
     if(dayOfYear != DateTime.getParts().getYearDay()) {
       resetStats();
     }
@@ -1224,11 +1225,10 @@ struct VentManager {
       return;
     }
     int currentHour = DateTime.getParts().getHours();
-    if(ventConfig.nightStartHour >= currentHour || currentHour <= ventConfig.nightEndHour) {
+    if(currentHour >= ventConfig.nightStartHour || currentHour <= ventConfig.nightEndHour) {
       disableVent("night mode");
       return;
     }
-
     float humidity = humiditySensor.readHumidityIfNeeded();
     if(!humiditySensor.isHumidityValid(humidity)) {
       disableVent("invalid humidity");
