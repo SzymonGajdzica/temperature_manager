@@ -40,7 +40,6 @@ time_t lastInternetInterruption = 0;
 int moveDetectorPins[] = {moveDetectorBottomPin, moveDetectorMiddlePin, moveDetectorUpPin}; 
 String moveDetectorNames[] = {"bottomBathroom", "middleBathroom", "upBathroom"}; 
 
-DHT dht = DHT(humidityPin, DHT22);
 OneWire oneWire(temperaturePin);
 DallasTemperature sensors(&oneWire);
 Bounce2::Button upButtonKitchen = Bounce2::Button();
@@ -63,17 +62,9 @@ bool isTemperatureValid(float temperature) {
   return !isnan(temperature) && temperature > DEVICE_DISCONNECTED_C;
 }
 
-bool isHumidityValid(float humidity) {
-  return !isnan(humidity) && humidity >= 0.0 && humidity <= 100.0;
-}
-
 float getCurrentTemperature() {
   sensors.requestTemperatures(); 
   return sensors.getTempCByIndex(0);
-}
-
-float getCurrentHumidity() {
-  return dht.readHumidity();
 }
 
 void print(String message) {
@@ -274,6 +265,7 @@ PumpConfig pumpConfig = PumpConfig();
 
 struct VentConfig {
   public:
+  int humidityReadDelay;
   float bottomHumidityThreshold;
   float highHumidityThreshold;
   int maxWorkTime;
@@ -284,11 +276,12 @@ struct VentConfig {
   bool ventAutoMode;
   bool ventEnabled;
 
-  VentConfig() : bottomHumidityThreshold(55), highHumidityThreshold(70), maxWorkTime(30 * 60), minDelayTime(60 * 60), nightStartHour(23), nightEndHour(6), useHighGear(false), ventAutoMode(true), ventEnabled(false) {}
+  VentConfig() : humidityReadDelay(30), bottomHumidityThreshold(55), highHumidityThreshold(70), maxWorkTime(30 * 60), minDelayTime(60 * 60), nightStartHour(23), nightEndHour(6), useHighGear(false), ventAutoMode(true), ventEnabled(false) {}
   ~VentConfig() {}
 
   Json getJson() {
     Json json;
+    json["humidityReadDelay"] = humidityReadDelay;
     json["bottomHumidityThreshold"] = bottomHumidityThreshold;
     json["highHumidityThreshold"] = highHumidityThreshold;
     json["maxWorkTime"] = maxWorkTime;
@@ -303,6 +296,7 @@ struct VentConfig {
 
   Json getDocumentationJson() {
     Json json;
+    json["humidityReadDelay"] = "Częstotliwość odczytu wilgotności w sekundach";
     json["bottomHumidityThreshold"] = "Próg wilgotności poniżej którego wyłączamy wentylację";
     json["highHumidityThreshold"] = "Próg wilgotności powyżej którego włączamy wentylacje bez wzgledu na ograniczenia czasowe (maxWorkTime i minDelayTime)";
     json["maxWorkTime"] = "Maksymalny czas pracy wentylacji w sekundach (jeśli wentylacja jest włączona, to po tym czasie zostanie wyłączona, jeśli jest ponizej highHumidityThreshold)";
@@ -317,6 +311,10 @@ struct VentConfig {
 
   bool updateParams(AsyncWebServerRequest* request) {
     bool hasChanges = false;
+    if (request->hasParam("humidityReadDelay")) {
+      humidityReadDelay = request->getParam("humidityReadDelay")->value().toInt();
+      hasChanges = true;
+    }
     if (request->hasParam("bottomHumidityThreshold")) {
       bottomHumidityThreshold = request->getParam("bottomHumidityThreshold")->value().toFloat();
       hasChanges = true;
@@ -359,6 +357,62 @@ struct VentConfig {
 };
 
 VentConfig ventConfig = VentConfig();
+
+struct HumiditySensor {
+  private:
+  DHT dht;
+  float lastReadHumidity = NAN;
+  float lastGoodReadHumidity = NAN;
+  time_t lastReadHumidityTime = 0;
+  time_t lastGoodReadHumidityTime = 0;
+
+  public:
+  HumiditySensor(uint8_t pin) : dht(pin, DHT22) {}
+  ~HumiditySensor() {}
+
+  void begin() {
+    dht.begin();
+  }
+
+  float getLastHumidity() {
+    return dht.readHumidity();
+  }
+
+  float getLastGoodHumidity() {
+    return lastGoodReadHumidity;
+  }
+
+  time_t getLastGoodHumidityReadTime() {
+    return lastGoodReadHumidityTime;
+  }
+
+  time_t getLastHumidityReadTime() {
+    return lastReadHumidityTime;
+  }
+
+  float readHumidityIfNeeded() {
+    if(DateTime.getTime() - lastReadHumidityTime < ventConfig.humidityReadDelay) {
+      return lastReadHumidity;
+    }
+    delay(2000);
+    float humidity = dht.readHumidity();
+    time_t time = DateTime.getTime();
+    lastReadHumidityTime = millis();
+    lastReadHumidity = humidity;
+    if (isHumidityValid(humidity)) {
+      lastGoodReadHumidity = humidity;
+      lastGoodReadHumidityTime = time;
+    }
+    return humidity;
+  }
+
+  bool isHumidityValid(float humidity) {
+    return !isnan(humidity) && humidity >= 0.0 && humidity <= 100.0;
+  }
+
+};
+
+HumiditySensor humiditySensor = HumiditySensor(humidityPin);
 
 struct VentStatus {
   private:
@@ -1093,8 +1147,8 @@ struct VentManager {
       return;
     }
 
-    float humidity = getCurrentHumidity();
-    if(!isHumidityValid(humidity)) {
+    float humidity = humiditySensor.readHumidityIfNeeded();
+    if(!humiditySensor.isHumidityValid(humidity)) {
       disableVent("invalid humidity");
       return;
     }
@@ -1123,8 +1177,12 @@ struct VentManager {
 
   Json getJson() {
     Json json;
-    float humidity = getCurrentHumidity();
-    json["currentHumidity"] = isHumidityValid(humidity) ? humidity : -1.0f;
+    float lastHumidity = humiditySensor.getLastHumidity();
+    float lastGoodHumidity = humiditySensor.getLastGoodHumidity();
+    json["lastHumidity"] = humiditySensor.isHumidityValid(lastHumidity) ? lastHumidity : -1.0f;
+    json["lastHumidityReadTime"] = DateTimeParts::from(humiditySensor.getLastHumidityReadTime()).toString();
+    json["lastGoodHumidity"] = humiditySensor.isHumidityValid(lastGoodHumidity) ? lastGoodHumidity : -1.0f;
+    json["lastGoodHumidityReadTime"] = DateTimeParts::from(humiditySensor.getLastGoodHumidityReadTime()).toString();
     json["ventOnTime"] = int(ventOnTime);
     json["lastVentEnableTime"] = DateTimeParts::from(ventEnableTime).toString();
     json["lastVentWorkTime"] = DateTimeParts::from(lastVentWorkTime).toString();
@@ -1134,7 +1192,10 @@ struct VentManager {
 
   Json getDocumentationJson() {
     Json json;
-    json["currentHumidity"] = "Aktualna wilgotność na czujniku";
+    json["lastHumidity"] = "Ostatnia odczytana wilgotność na czujniku";
+    json["lastHumidityReadTime"] = "Czas ostatniego odczytu wilgotności";
+    json["lastGoodHumidity"] = "Ostatnia poprawna wilgotność na czujniku";
+    json["lastGoodHumidityReadTime"] = "Czas ostatniego poprawnego odczytu wilgotności";
     json["ventOnTime"] = "Czas pracy wentylacji w sekundach aktualnego dnia";
     json["lastVentEnableTime"] = "Czas ostatniego włączenia wentylacji";
     json["lastVentWorkTime"] = "Czas ostatniej pracy wentylacji (zarejestrowana w momencie wyłączenia)";
@@ -1289,7 +1350,7 @@ void setup() {
   Serial.begin(9600);
   delay(2000);
   sensors.begin();
-  dht.begin();
+  humiditySensor.begin();
   StorageConfig storageConfig = StorageConfig(heaterConfig, pumpConfig, ventConfig);
   EEPROM.begin(sizeof(StorageConfig));
   if(EEPROM.read(0) == 0xFF) {
