@@ -1211,7 +1211,6 @@ struct VentManager {
   }
 
   void invalidate() {
-    println("Invalidating vent manager1");
     if(dayOfYear != DateTime.getParts().getYearDay()) {
       resetStats();
     }
