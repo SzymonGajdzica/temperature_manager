@@ -17,7 +17,7 @@
 
 //todo dodac grzanie miedzy 13 a 15
 
-#define version 3
+#define version 4
 
 const int maxNumberOfRetries = 10;
 const int httpReadDelay = 30000;
@@ -40,8 +40,6 @@ time_t lastInternetInterruption = 0;
 int moveDetectorPins[] = {moveDetectorBottomPin, moveDetectorMiddlePin, moveDetectorUpPin}; 
 String moveDetectorNames[] = {"bottomBathroom", "middleBathroom", "upBathroom"}; 
 
-OneWire oneWire(temperaturePin);
-DallasTemperature sensors(&oneWire);
 Bounce2::Button upButtonKitchen = Bounce2::Button();
 AsyncWebServer server(80);
 
@@ -56,15 +54,6 @@ void setPinOutput(int pin, bool value) {
 
 bool isMoveDetected(int pin) {
   return digitalRead(pin) == HIGH;
-}
-
-bool isTemperatureValid(float temperature) {
-  return !isnan(temperature) && temperature > DEVICE_DISCONNECTED_C;
-}
-
-float getCurrentTemperature() {
-  sensors.requestTemperatures(); 
-  return sensors.getTempCByIndex(0);
 }
 
 void print(String message) {
@@ -155,6 +144,8 @@ OtherParams otherParams = OtherParams();
 
 struct PumpConfig {
   public:
+  int workingTemperatureReadDelay;
+  int idleTemperatureReadDelay;
   float pumpOffTemperature;
   int pumpOnTimeBottomBathroom;
   int pumpOnTimeMiddleBathroom;
@@ -166,7 +157,7 @@ struct PumpConfig {
   bool pumpAutoMode;
   bool pumpEnabled;
 
-  PumpConfig() : pumpOffTemperature(30), pumpOnTimeBottomBathroom(10), pumpOnTimeMiddleBathroom(10), pumpOnTimeUpKitchen(20), pumpOnTimeUpBathroom(20), pumpDelayTime(60 * 30), pumpLowTemperatureGuard(5), pumpOnTimeGuard(60 * 2), pumpAutoMode(true), pumpEnabled(false) {}
+  PumpConfig() : workingTemperatureReadDelay(2), idleTemperatureReadDelay(120), pumpOffTemperature(30), pumpOnTimeBottomBathroom(10), pumpOnTimeMiddleBathroom(10), pumpOnTimeUpKitchen(20), pumpOnTimeUpBathroom(20), pumpDelayTime(60 * 30), pumpLowTemperatureGuard(5), pumpOnTimeGuard(60 * 2), pumpAutoMode(true), pumpEnabled(false) {}
   ~PumpConfig() {}
 
   int getPumpOnTime(int index) {
@@ -186,6 +177,8 @@ struct PumpConfig {
 
   Json getJson() {
     Json json;
+    json["workingTemperatureReadDelay"] = workingTemperatureReadDelay;
+    json["idleTemperatureReadDelay"] = idleTemperatureReadDelay;
     json["pumpOffTemperature"] = pumpOffTemperature;
     json["pumpOnTimeBottomBathroom"] = pumpOnTimeBottomBathroom;
     json["pumpOnTimeMiddleBathroom"] = pumpOnTimeMiddleBathroom;
@@ -201,6 +194,8 @@ struct PumpConfig {
 
   Json getDocumentationJson() {
     Json json;
+    json["workingTemperatureReadDelay"] = "Opóźnienie odczytu temperatury gdy pompa pracuje w sekundach";
+    json["idleTemperatureReadDelay"] = "Opóźnienie odczytu temperatury gdy pompa nie pracuje w sekundach";
     json["pumpOffTemperature"] = "Temperatura przy której pompa się wyłącza (optymalizacja pracy pompy, nie pompujemy niepotrzebnie jeśli woda jest już ciepła)";
     json["pumpOnTimeBottomBathroom"] = "Czas pracy pompy przy wykryciu ruchu na czujniku dolnym w sekundach (łazienka)";
     json["pumpOnTimeMiddleBathroom"] = "Czas pracy pompy przy wykryciu ruchu na czujniku środkowym w sekundach (łazienka)";
@@ -216,6 +211,14 @@ struct PumpConfig {
 
   bool updateParams(AsyncWebServerRequest* request) {
     bool hasChanges = false;
+    if (request->hasParam("workingTemperatureReadDelay")) {
+      workingTemperatureReadDelay = request->getParam("workingTemperatureReadDelay")->value().toInt();
+      hasChanges = true;
+    }
+    if (request->hasParam("idleTemperatureReadDelay")) {
+      idleTemperatureReadDelay = request->getParam("idleTemperatureReadDelay")->value().toInt();
+      hasChanges = true;
+    }
     if (request->hasParam("pumpOffTemperature")) {
       pumpOffTemperature = request->getParam("pumpOffTemperature")->value().toFloat();
       hasChanges = true;
@@ -366,6 +369,19 @@ struct HumiditySensor {
   time_t lastReadHumidityTime = 0;
   time_t lastGoodReadHumidityTime = 0;
 
+  float readHumidity() {
+    delay(2000);
+    float humidity = dht.readHumidity();
+    time_t time = DateTime.getTime();
+    lastReadHumidityTime = millis();
+    lastReadHumidity = humidity;
+    if (isHumidityValid(humidity)) {
+      lastGoodReadHumidity = humidity;
+      lastGoodReadHumidityTime = time;
+    }
+    return humidity;
+  }
+
   public:
   HumiditySensor(uint8_t pin) : dht(pin, DHT22) {}
   ~HumiditySensor() {}
@@ -394,16 +410,7 @@ struct HumiditySensor {
     if(DateTime.getTime() - lastReadHumidityTime < ventConfig.humidityReadDelay) {
       return lastReadHumidity;
     }
-    delay(2000);
-    float humidity = dht.readHumidity();
-    time_t time = DateTime.getTime();
-    lastReadHumidityTime = millis();
-    lastReadHumidity = humidity;
-    if (isHumidityValid(humidity)) {
-      lastGoodReadHumidity = humidity;
-      lastGoodReadHumidityTime = time;
-    }
-    return humidity;
+    return readHumidity();
   }
 
   bool isHumidityValid(float humidity) {
@@ -413,6 +420,75 @@ struct HumiditySensor {
 };
 
 HumiditySensor humiditySensor = HumiditySensor(humidityPin);
+
+struct TemperatureSensor {
+  private:
+  OneWire oneWire;
+  DallasTemperature sensors;
+  float lastReadTemperature = NAN;
+  float lastGoodReadTemperature = NAN;
+  time_t lastReadTemperatureTime = 0;
+  time_t lastGoodReadTemperatureTime = 0;
+
+  float readTemperature() {
+    delay(100);
+    sensors.requestTemperatures(); 
+    float temperature = sensors.getTempCByIndex(0);
+    time_t time = DateTime.getTime();
+    lastReadTemperatureTime = millis();
+    lastReadTemperature = temperature;
+    if (isTemperatureValid(temperature)) {
+      lastGoodReadTemperature = temperature;
+      lastGoodReadTemperatureTime = time;
+    }
+    return temperature;
+  }
+
+  public:
+  TemperatureSensor(uint8_t pin) : oneWire(pin), sensors(&oneWire) {}
+  ~TemperatureSensor() {}
+
+  void begin() {
+    sensors.begin();
+  }
+
+  float getLastTemperature() {
+    return lastReadTemperature;
+  }
+
+  float getLastGoodTemperature() {
+    return lastGoodReadTemperature;
+  }
+
+  time_t getLastGoodTemperatureReadTime() {
+    return lastGoodReadTemperatureTime;
+  }
+
+  time_t getLastTemperatureReadTime() {
+    return lastReadTemperatureTime;
+  }
+
+  float readWorkingTemperatureIfNeeded() {
+    if(DateTime.getTime() - lastReadTemperatureTime < pumpConfig.workingTemperatureReadDelay) {
+      return lastReadTemperature;
+    }
+    return readTemperature();
+  }
+
+  float readIdleTemperatureIfNeeded() {
+    if(DateTime.getTime() - lastReadTemperatureTime < pumpConfig.idleTemperatureReadDelay) {
+      return lastReadTemperature;
+    }
+    return readTemperature();
+  }
+
+  bool isTemperatureValid(float temperature) {
+    return !isnan(temperature) && temperature > DEVICE_DISCONNECTED_C;
+  }
+
+};
+
+TemperatureSensor temperatureSensor = TemperatureSensor(temperaturePin);
 
 struct VentStatus {
   private:
@@ -1007,13 +1083,13 @@ struct PumpManager {
       return;
     }
 
-    float temperature = getCurrentTemperature();
     if(pumpStatus.isPumpEnabled()) {
+      float temperature = temperatureSensor.readWorkingTemperatureIfNeeded();
       if(DateTime.getTime() > (pumpEnableTime + pumpOnTime)) {
         disablePump("finished pumping after pumpOnTime");
         return;
       }
-      if(isTemperatureValid(temperature) && temperature > pumpConfig.pumpOffTemperature && DateTime.getTime() > (pumpEnableTime + 2)) {
+      if(temperatureSensor.isTemperatureValid(temperature) && temperature > pumpConfig.pumpOffTemperature && DateTime.getTime() > (pumpEnableTime + 2)) {
         disablePump("temperature above pumpOffTemperature");
         return;
       }
@@ -1024,7 +1100,8 @@ struct PumpManager {
       return;
     }
 
-    if(isTemperatureValid(temperature) && temperature > pumpConfig.pumpOffTemperature) {
+    float temperature = temperatureSensor.readIdleTemperatureIfNeeded();
+    if(temperatureSensor.isTemperatureValid(temperature) && temperature > pumpConfig.pumpOffTemperature) {
       pumpDisableTime = DateTime.getTime();
       statusReason = "temperature still above pumpOffTemperature";
       return;
@@ -1049,7 +1126,7 @@ struct PumpManager {
         }
       }
     }
-    if(isTemperatureValid(temperature) && temperature < pumpConfig.pumpLowTemperatureGuard) {
+    if(temperatureSensor.isTemperatureValid(temperature) && temperature < pumpConfig.pumpLowTemperatureGuard) {
       enablePump(pumpConfig.pumpOnTimeGuard, "temperature below pumpLowTemperatureGuard");
       return;
     }
@@ -1057,9 +1134,14 @@ struct PumpManager {
 
   Json getJson() {
     Json json;
+    float lastReadTemperature = temperatureSensor.getLastTemperature();
+    float lastGoodTemperature = temperatureSensor.getLastGoodTemperature();
+    json["lastTemperature"] = temperatureSensor.isTemperatureValid(lastReadTemperature) ? lastReadTemperature : -1000.0f;
+    json["lastTemperatureReadTime"] = DateTimeParts::from(temperatureSensor.getLastTemperatureReadTime()).toString();
+    json["lastGoodTemperature"] = temperatureSensor.isTemperatureValid(lastGoodTemperature) ? lastGoodTemperature : -1000.0f;
+    json["lastGoodTemperatureReadTime"] = DateTimeParts::from(temperatureSensor.getLastGoodTemperatureReadTime()).toString();
     json["pumpUptime"] = int(pumpUptime);
     json["lastPumpEnableTime"] = DateTimeParts::from(pumpEnableTime).toString();
-    json["currentTemperature"] = getCurrentTemperature();
     json["bottomBathroomTriggers"] = triggerCounters[0];
     json["middleBathroomTriggers"] = triggerCounters[1];
     json["upBathroomTriggers"] = triggerCounters[2];
@@ -1349,7 +1431,7 @@ void setup() {
   upButtonKitchen.setPressedState(LOW); 
   Serial.begin(9600);
   delay(2000);
-  sensors.begin();
+  temperatureSensor.begin();
   humiditySensor.begin();
   StorageConfig storageConfig = StorageConfig(heaterConfig, pumpConfig, ventConfig);
   EEPROM.begin(sizeof(StorageConfig));
@@ -1381,4 +1463,5 @@ void loop() {
   if(heaterStatus.shouldUpdateHeaters()) {
     productionPlansManager.executeProductionPlan();
   }
+  delay(1);
 }
