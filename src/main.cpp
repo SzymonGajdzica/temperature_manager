@@ -974,7 +974,7 @@ struct PumpManager {
     if(!pumpStatus.isPumpEnabled()) {
       return;
     }
-    statusReason = reason;
+    statusReason = statusReason + " | " + reason;
     pumpUptime += DateTime.getTime() - pumpEnableTime;
     pumpDisableTime = DateTime.getTime();
     pumpStatus.setPumpMode(false);
@@ -1111,7 +1111,7 @@ struct VentManager {
     if(!ventStatus.isEnabled()) {
       return;
     }
-    statusReason = reason;
+    statusReason = statusReason + " | " + reason;
     lastVentWorkTime = DateTime.getTime();
     if(ventEnableTime != 0) {
       ventOnTime += DateTime.getTime() - ventEnableTime;
