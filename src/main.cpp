@@ -1060,15 +1060,11 @@ struct ProductionPlansManager {
 
   void executeProductionPlan() {
     int hour = DateTime.getParts().getHours();
-    bool foundHour = false;
-    for (int i = 0; i < mHourProductionPlans->size(); i++) {
-      HourProductionPlan plan = mHourProductionPlans->get(i);
-      if(plan.getHour() == hour) {
-        heaterStatus.setHeaterMode(plan.getHeater200Enabled1(), plan.getHeater200Enabled2(), plan.getHeater140Enabled());
-        foundHour = true;
-      }
-    }
-    if(!foundHour) {
+    int index = getIndexOfHour(mHourProductionPlans, hour);
+    if(index >= 0) {
+      HourProductionPlan plan = mHourProductionPlans->get(index);
+      heaterStatus.setHeaterMode(plan.getHeater200Enabled1(), plan.getHeater200Enabled2(), plan.getHeater140Enabled());
+    } else {
       heaterStatus.disableAllHeaters();
     }
   }
