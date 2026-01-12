@@ -43,6 +43,56 @@ void println(String message) {
   Serial.println(message);
 }
 
+bool isWifiConnected() {
+  return WiFi.status() == WL_CONNECTED;
+}
+
+void setupInternetConnectionIfNeeded() {
+  if(isWifiConnected()) {
+    return;
+  }
+  IPAddress localIP(192, 168, 100, 181);
+  IPAddress gateway(192,168,100,1); 
+  IPAddress subnet(255,255,0,0); 
+  IPAddress primaryDNS(8, 8, 8, 8);
+  IPAddress secondaryDNS(8, 8, 4, 4); 
+  if (!WiFi.config(localIP, gateway, subnet, primaryDNS, secondaryDNS)) {  
+    while (1) {
+        Serial.println("STA Failed to configure");
+        delay(10000);
+    }
+  }
+  WiFi.mode(WIFI_STA);
+  WiFi.begin("Dom", "123456789a");
+  print("Connecting to WiFi");
+  while (!isWifiConnected()) {
+    delay(100);
+    print(".");
+  }
+  lastInternetInterruption = DateTime.getTime();
+  println(" Connected!");
+
+  print("IP address: ");
+  println(WiFi.localIP().toString());
+}
+
+void setupLocalTimefNeeded() {
+  if(DateTime.isTimeValid()) {
+    return;
+  }
+  setupInternetConnectionIfNeeded();
+  DateTime.setTimeZone("CET-1CEST,M3.5.0,M10.5.0/3");
+  println("Fetching current time from server");
+  while(!DateTime.isTimeValid()) {
+    if(!DateTime.begin(20000)) {
+      println("Failed to fetch current time from server");
+      delay(httpReadDelay);
+    }
+  }
+  print("Fetched current time from server ");
+  println(DateTime.toString());
+}
+
 struct Switch {
   private:
   int pin;
@@ -130,57 +180,6 @@ Switch heater140Switch = Switch(heater140Pin, "Grzałka 140L");
 
 Bounce2::Button upButtonKitchen = Bounce2::Button();
 AsyncWebServer server(80);
-
-bool isWifiConnected() {
-  return WiFi.status() == WL_CONNECTED;
-}
-
-void setupInternetConnectionIfNeeded() {
-  if(isWifiConnected()) {
-    return;
-  }
-  IPAddress localIP(192, 168, 100, 181);
-  IPAddress gateway(192,168,100,1); 
-  IPAddress subnet(255,255,0,0); 
-  IPAddress primaryDNS(8, 8, 8, 8);
-  IPAddress secondaryDNS(8, 8, 4, 4); 
-  if (!WiFi.config(localIP, gateway, subnet, primaryDNS, secondaryDNS)) {  
-    while (1) {
-        Serial.println("STA Failed to configure");
-        delay(10000);
-    }
-  }
-  WiFi.mode(WIFI_STA);
-  WiFi.begin("Dom", "123456789a");
-  print("Connecting to WiFi");
-  // Wait for connection
-  while (!isWifiConnected()) {
-    delay(100);
-    print(".");
-  }
-  lastInternetInterruption = DateTime.getTime();
-  println(" Connected!");
-
-  print("IP address: ");
-  println(WiFi.localIP().toString());
-}
-
-void setupLocalTimefNeeded() {
-  if(DateTime.isTimeValid()) {
-    return;
-  }
-  setupInternetConnectionIfNeeded();
-  DateTime.setTimeZone("CET-1CEST,M3.5.0,M10.5.0/3");
-  println("Fetching current time from server");
-  while(!DateTime.isTimeValid()) {
-    if(!DateTime.begin(20000)) {
-      println("Failed to fetch current time from server");
-      delay(httpReadDelay);
-    }
-  }
-  print("Fetched current time from server ");
-  println(DateTime.toString());
-}
 
 struct OtherParams {
   public:
@@ -1585,27 +1584,22 @@ void setupServer() {
 }
 
 void setup() {
-  pinMode(heater200Pin1, OUTPUT);
-  pinMode(heater200Pin2, OUTPUT);
-  pinMode(heater140Pin, OUTPUT);
-  pinMode(pumpPin, OUTPUT);
-  pinMode(ventPin, OUTPUT);
-  pinMode(ventGearPin, OUTPUT);
+  heater140Switch.begin();
+  heater200Switch1.begin();
+  heater200Switch2.begin();
+  pumpSwitch.begin();
+  ventSwitch.begin();
+  ventGearSwitch.begin();
   bottomMoveDetector.begin();
   middleMoveDetector.begin();
   upMoveDetector.begin();
-  digitalWrite(heater200Pin1, LOW);
-  digitalWrite(heater200Pin2, LOW);
-  digitalWrite(heater140Pin, LOW);
-  digitalWrite(pumpPin, LOW);
-  digitalWrite(ventPin, LOW);
-  digitalWrite(ventGearPin, LOW);
   upButtonKitchen.attach(moveDetectorUpPin, INPUT);
   upButtonKitchen.interval(5); 
   upButtonKitchen.setPressedState(LOW); 
   Serial.begin(9600);
   while (!Serial)
     delay(100);
+  delay(1000);
   temperatureSensor.begin();
   humiditySensor.begin();
   StorageConfig storageConfig = StorageConfig(heaterConfig, pumpConfig, ventConfig);
