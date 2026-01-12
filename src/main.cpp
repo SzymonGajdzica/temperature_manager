@@ -8,8 +8,8 @@
 #include <EEPROM.h>
 #include <OneWire.h>
 #include <DallasTemperature.h>
-#include <DHT.h>
-#include <Bounce2.h> 
+#include <Bounce2.h>
+#include <SHT4x.h>
 
 // 200L, 4KW od 50C do 70C w 70 minut
 // 200L, 2KW od 50C do 70C w 140 minut
@@ -23,7 +23,8 @@ const int maxNumberOfRetries = 10;
 const int httpReadDelay = 30000;
 time_t lastInternetInterruption = 0;
 
-#define humidityPin 19
+#define humidityPinSDA 17
+#define humidityPinSCL 19
 #define temperaturePin 18
 #define moveDetectorBottomPin 21
 #define moveDetectorMiddlePin 22
@@ -363,15 +364,20 @@ VentConfig ventConfig = VentConfig();
 
 struct HumiditySensor {
   private:
-  DHT dht;
+  uint8_t pinSDA;
+  uint8_t pinSCL;
+  SHT4x sht;
   float lastReadHumidity;
   float lastGoodReadHumidity;
   time_t lastReadHumidityTime;
   time_t lastGoodReadHumidityTime;
+  bool serialInitialized = false;
 
   float readHumidity() {
-    delay(2000);
-    float humidity = dht.readHumidity();
+    float humidity = -1.0f;
+    if(serialInitialized && sht.measure() == SHT4X_STATUS_OK && sht.RHcrcOK) {
+      humidity = sht.RHtoPercent();
+    }
     time_t mTime = DateTime.getTime();
     lastReadHumidityTime = mTime;
     lastReadHumidity = humidity;
@@ -383,11 +389,14 @@ struct HumiditySensor {
   }
 
   public:
-  HumiditySensor(uint8_t pin) : dht(pin, DHT22), lastReadHumidity(NAN), lastGoodReadHumidity(NAN), lastReadHumidityTime(0), lastGoodReadHumidityTime(0) {}
+  HumiditySensor(uint8_t pinSDA, uint8_t pinSCL) : pinSDA(pinSDA), pinSCL(pinSCL), sht(), lastReadHumidity(-1.0f), lastGoodReadHumidity(-1.0f), lastReadHumidityTime(0), lastGoodReadHumidityTime(0) {}
   ~HumiditySensor() {}
 
   void begin() {
-    dht.begin();
+    Wire.begin(pinSDA, pinSCL);
+    sht.setChipType(SHT4X_CHIPTYPE_A);
+    sht.setMode(SHT4X_CMD_MEAS_MED_PREC);
+    serialInitialized = sht.checkSerial() == SHT4X_STATUS_OK;
   }
 
   float getLastHumidity() {
@@ -417,9 +426,29 @@ struct HumiditySensor {
     return !isnan(humidity) && humidity >= 0.0 && humidity <= 100.0;
   }
 
+    Json getJson() {
+    Json json;
+    json["lastHumidity"] = getLastHumidity();
+    json["lastHumidityReadTime"] = DateTimeParts::from(getLastHumidityReadTime()).toString();
+    json["lastGoodHumidity"] = getLastGoodHumidity();
+    json["lastGoodHumidityReadTime"] = DateTimeParts::from(getLastGoodHumidityReadTime()).toString();
+    json["serialInitialized"] = serialInitialized;
+    return json;
+  }
+
+  Json getDocumentationJson() {
+    Json json;
+    json["lastHumidity"] = "Ostatnia odczytana wilgotność powietrza w procentach";
+    json["lastHumidityReadTime"] = "Czas ostatniego odczytu wilgotności powietrza";
+    json["lastGoodHumidity"] = "Ostatnia poprawna odczytana wilgotność powietrza w procentach";
+    json["lastGoodHumidityReadTime"] = "Czas ostatniego poprawnego odczytu wilgotności powietrza";
+    json["serialInitialized"] = "Czy komunikacja z czujnikiem wilgotności została poprawnie zainicjalizowana";
+    return json;
+  }
+
 };
 
-HumiditySensor humiditySensor = HumiditySensor(humidityPin);
+HumiditySensor humiditySensor = HumiditySensor(humidityPinSDA, humidityPinSCL);
 
 struct TemperatureSensor {
   private:
@@ -431,9 +460,13 @@ struct TemperatureSensor {
   time_t lastGoodReadTemperatureTime;
 
   float readTemperature() {
-    delay(100);
     sensors.requestTemperatures(); 
-    float temperature = sensors.getTempCByIndex(0);
+    delay(750);
+    float mTemperature = sensors.getTempCByIndex(0);
+    float temperature = DEVICE_DISCONNECTED_C;
+    if(isTemperatureValid(mTemperature)) {
+      temperature = mTemperature;
+    }
     time_t mTime = DateTime.getTime();
     lastReadTemperatureTime = mTime;
     lastReadTemperature = temperature;
@@ -445,7 +478,7 @@ struct TemperatureSensor {
   }
 
   public:
-  TemperatureSensor(uint8_t pin) : oneWire(pin), sensors(&oneWire), lastReadTemperature(NAN), lastGoodReadTemperature(NAN), lastReadTemperatureTime(0), lastGoodReadTemperatureTime(0) {}
+  TemperatureSensor(uint8_t pin) : oneWire(pin), sensors(&oneWire), lastReadTemperature(DEVICE_DISCONNECTED_C), lastGoodReadTemperature(DEVICE_DISCONNECTED_C), lastReadTemperatureTime(0), lastGoodReadTemperatureTime(0) {}
   ~TemperatureSensor() {}
 
   void begin() {
@@ -483,7 +516,25 @@ struct TemperatureSensor {
   }
 
   bool isTemperatureValid(float temperature) {
-    return !isnan(temperature) && temperature > DEVICE_DISCONNECTED_C;
+    return !isnan(temperature) && temperature > DEVICE_DISCONNECTED_C && temperature != 85.0f;
+  }
+
+  Json getJson() {
+    Json json;
+    json["lastTemperature"] = getLastTemperature();
+    json["lastTemperatureReadTime"] = DateTimeParts::from(getLastTemperatureReadTime()).toString();
+    json["lastGoodTemperature"] = getLastGoodTemperature();
+    json["lastGoodTemperatureReadTime"] = DateTimeParts::from(getLastGoodTemperatureReadTime()).toString();
+    return json;
+  }
+
+  Json getDocumentationJson() {
+    Json json;
+    json["lastTemperature"] = "Ostatnia odczytana temperatura w stopniach Celsjusza";
+    json["lastTemperatureReadTime"] = "Czas ostatniego odczytu temperatury";
+    json["lastGoodTemperature"] = "Ostatnia poprawna odczytana temperatura w stopniach Celsjusza";
+    json["lastGoodTemperatureReadTime"] = "Czas ostatniego poprawnego odczytu temperatury";
+    return json;
   }
 
 };
@@ -1134,12 +1185,7 @@ struct PumpManager {
 
   Json getJson() {
     Json json;
-    float lastReadTemperature = temperatureSensor.getLastTemperature();
-    float lastGoodTemperature = temperatureSensor.getLastGoodTemperature();
-    json["lastTemperature"] = temperatureSensor.isTemperatureValid(lastReadTemperature) ? lastReadTemperature : -1000.0f;
-    json["lastTemperatureReadTime"] = DateTimeParts::from(temperatureSensor.getLastTemperatureReadTime()).toString();
-    json["lastGoodTemperature"] = temperatureSensor.isTemperatureValid(lastGoodTemperature) ? lastGoodTemperature : -1000.0f;
-    json["lastGoodTemperatureReadTime"] = DateTimeParts::from(temperatureSensor.getLastGoodTemperatureReadTime()).toString();
+    json["temperatureSensor"] = temperatureSensor.getJson();
     json["pumpUptime"] = int(pumpUptime);
     json["lastPumpEnableTime"] = DateTimeParts::from(pumpEnableTime).toString();
     json["bottomBathroomTriggers"] = triggerCounters[0];
@@ -1152,9 +1198,9 @@ struct PumpManager {
 
   Json getDocumentationJson() {
     Json json;
+    json["temperatureSensor"] = temperatureSensor.getDocumentationJson();
     json["pumpUptime"] = "Czas pracy pompy w sekundach aktualnego dnia";
     json["lastPumpEnableTime"] = "Czas ostatniego włączenia pompy";
-    json["currentTemperature"] = "Aktualna temperatura na czujniku";
     json["bottomBathroomTriggers"] = "Liczba uruchomień pompy z czujnika dolnego (łazienka) aktualnego dnia";
     json["middleBathroomTriggers"] = "Liczba uruchomień pompy z czujnika środkowego (łazienka) aktualnego dnia";
     json["upKitchenTriggers"] = "Liczba uruchomień pompy z przycisku górnego (kuchnia) aktualnego dnia";
@@ -1258,12 +1304,7 @@ struct VentManager {
 
   Json getJson() {
     Json json;
-    float lastHumidity = humiditySensor.getLastHumidity();
-    float lastGoodHumidity = humiditySensor.getLastGoodHumidity();
-    json["lastHumidity"] = humiditySensor.isHumidityValid(lastHumidity) ? lastHumidity : -1.0f;
-    json["lastHumidityReadTime"] = DateTimeParts::from(humiditySensor.getLastHumidityReadTime()).toString();
-    json["lastGoodHumidity"] = humiditySensor.isHumidityValid(lastGoodHumidity) ? lastGoodHumidity : -1.0f;
-    json["lastGoodHumidityReadTime"] = DateTimeParts::from(humiditySensor.getLastGoodHumidityReadTime()).toString();
+    json["humiditySensor"] = humiditySensor.getJson();
     json["ventOnTime"] = int(ventOnTime);
     json["lastVentEnableTime"] = DateTimeParts::from(ventEnableTime).toString();
     json["lastVentWorkTime"] = DateTimeParts::from(lastVentWorkTime).toString();
@@ -1273,10 +1314,7 @@ struct VentManager {
 
   Json getDocumentationJson() {
     Json json;
-    json["lastHumidity"] = "Ostatnia odczytana wilgotność na czujniku";
-    json["lastHumidityReadTime"] = "Czas ostatniego odczytu wilgotności";
-    json["lastGoodHumidity"] = "Ostatnia poprawna wilgotność na czujniku";
-    json["lastGoodHumidityReadTime"] = "Czas ostatniego poprawnego odczytu wilgotności";
+    json["humiditySensor"] = humiditySensor.getDocumentationJson();
     json["ventOnTime"] = "Czas pracy wentylacji w sekundach aktualnego dnia";
     json["lastVentEnableTime"] = "Czas ostatniego włączenia wentylacji";
     json["lastVentWorkTime"] = "Czas ostatniej pracy wentylacji (zarejestrowana w momencie wyłączenia)";
@@ -1429,7 +1467,8 @@ void setup() {
   upButtonKitchen.interval(5); 
   upButtonKitchen.setPressedState(LOW); 
   Serial.begin(9600);
-  delay(2000);
+  while (!Serial)
+    delay(100);
   temperatureSensor.begin();
   humiditySensor.begin();
   StorageConfig storageConfig = StorageConfig(heaterConfig, pumpConfig, ventConfig);
