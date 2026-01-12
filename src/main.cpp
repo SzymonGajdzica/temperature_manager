@@ -15,7 +15,7 @@
 // 200L, 2KW od 50C do 70C w 140 minut
 // 140L, 2KW od 10C do 70C w 5h
 
-#define version 5
+#define version 6
 
 const int maxNumberOfRetries = 10;
 const int httpReadDelay = 30000;
@@ -35,15 +35,6 @@ time_t lastInternetInterruption = 0;
 #define ventPin 33
 #define ventGearPin 32
 
-void setPinOutput(int pin, bool value) {
-  if (value) {
-    digitalWrite(pin, HIGH);
-  } else {
-    digitalWrite(pin, LOW);
-  }
-  delay(1000);
-}
-
 void print(String message) {
   Serial.print(message);
 }
@@ -51,6 +42,91 @@ void print(String message) {
 void println(String message) {
   Serial.println(message);
 }
+
+struct Switch {
+  private:
+  int pin;
+  bool enabled;
+  String name;
+  time_t lastEnableTime;
+  time_t lastDisableTime;
+
+  void setPinOutput(int pin, bool value) {
+    if (value) {
+      digitalWrite(pin, HIGH);
+    } else {
+      digitalWrite(pin, LOW);
+    }
+    delay(1000);
+  }
+
+  public:
+  Switch(int pin, String name) : pin(pin), enabled(false), name(name) { }
+  ~Switch() {}
+
+  void begin() {
+    pinMode(pin, OUTPUT);
+    digitalWrite(pin, LOW);
+  }
+
+  void setState(bool newState) {
+    if (enabled != newState) {
+      enabled = newState;
+      if(enabled) {
+        lastEnableTime = DateTime.getTime();
+      } else {
+        lastDisableTime = DateTime.getTime();
+      }
+      setPinOutput(pin, enabled);
+    }
+  }
+
+  bool isOn() {
+    return enabled;
+  }
+
+  String getName() {
+    return name;
+  }
+
+  time_t getLastEnableTime() {
+    return lastEnableTime;
+  }
+
+  time_t getLastDisableTime() {
+    return lastDisableTime;
+  }
+
+  time_t getLastChangeTime() {
+    return enabled ? lastEnableTime : lastDisableTime;
+  }
+
+  Json getJson() {
+    Json json;
+    json["name"] = name;
+    json["enabled"] = enabled;
+    json["lastEnableTime"] = DateTimeParts::from(lastEnableTime).toString();
+    json["lastDisableTime"] = DateTimeParts::from(lastDisableTime).toString();
+    return json;
+  }
+
+  Json getDocumentationJson() {
+    Json json;
+    json["name"] = "Nazwa przełącznika";
+    json["enabled"] = "Stan przełącznika (true - włączony, false - wyłączony)";
+    json["lastEnableTime"] = "Czas ostatniego włączenia przełącznika";
+    json["lastDisableTime"] = "Czas ostatniego wyłączenia przełącznika";
+    return json;
+  }
+
+};
+
+Switch ventSwitch = Switch(ventPin, "Wentylacja środek");
+Switch ventGearSwitch = Switch(ventGearPin, "Wentylacja środek bieg");
+Switch pumpSwitch = Switch(pumpPin, "Pompa obiegowa");
+Switch heater200Switch1 = Switch(heater200Pin1, "Grzałka pierwsza 200L");
+Switch heater200Switch2 = Switch(heater200Pin2, "Grzałka druga 200L");
+Switch heater140Switch = Switch(heater140Pin, "Grzałka 140L");
 
 Bounce2::Button upButtonKitchen = Bounce2::Button();
 AsyncWebServer server(80);
@@ -617,30 +693,22 @@ TemperatureSensor temperatureSensor = TemperatureSensor(temperaturePin);
 
 struct VentStatus {
   private:
-  bool mEnabled;
-  bool mHighGear;
 
   public:
-  VentStatus() : mEnabled(false), mHighGear(false) {}
+  VentStatus() {}
   ~VentStatus() {}
 
   void setVentMode(bool ventEnabled, bool highGear) {
-    if(mEnabled != ventEnabled) {
-      mEnabled = ventEnabled;
-      setPinOutput(ventPin, ventEnabled);
-    }
-    if(mHighGear != highGear) {
-      mHighGear = highGear;
-      setPinOutput(ventGearPin, highGear);
-    }
+    ventSwitch.setState(ventEnabled);
+    ventGearSwitch.setState(highGear);
   }
 
   bool isEnabled() {
-    return mEnabled;
+    return ventSwitch.isOn();
   }
 
   bool isHighGear() {
-    return mHighGear;
+    return ventGearSwitch.isOn();
   }
 
   Json getJson() {
@@ -814,12 +882,9 @@ int compareHourPredictionByValueDesc(HourProductionPlan &a, HourProductionPlan &
 struct HeaterStatus {
   private:
   int mHeaterSetHour;
-  bool mHeater200Enabled1;
-  bool mHeater200Enabled2;
-  bool mHeater140Enabled;
 
   public:
-  HeaterStatus() : mHeaterSetHour(-1), mHeater200Enabled1(false), mHeater200Enabled2(false), mHeater140Enabled(false) {}
+  HeaterStatus() : mHeaterSetHour(-1) {}
   ~HeaterStatus() {}
 
   bool shouldUpdateHeaters() {
@@ -827,18 +892,9 @@ struct HeaterStatus {
   }
 
   void setHeaterMode(bool heater200Enabled1, bool heater200Enabled2, bool heater140Enabled) {
-    if(mHeater200Enabled1 != heater200Enabled1) {
-      mHeater200Enabled1 = heater200Enabled1;
-      setPinOutput(heater200Pin1, heater200Enabled1);
-    }
-    if(mHeater200Enabled2 != heater200Enabled2) {
-      mHeater200Enabled2 = heater200Enabled2;
-      setPinOutput(heater200Pin2, heater200Enabled2);
-    }
-    if(mHeater140Enabled != heater140Enabled) {
-      mHeater140Enabled = heater140Enabled;
-      setPinOutput(heater140Pin, heater140Enabled);
-    }
+    heater200Switch1.setState(heater200Enabled1);
+    heater200Switch2.setState(heater200Enabled2);
+    heater140Switch.setState(heater140Enabled);
     mHeaterSetHour = DateTime.getParts().getHours();
   }
 
@@ -848,15 +904,15 @@ struct HeaterStatus {
   }
 
   bool isHeater200Enabled1() {
-    return mHeater200Enabled1;
+    return heater200Switch1.isOn();
   }
 
   bool isHeater200Enabled2() {
-    return mHeater200Enabled2;
+    return heater200Switch2.isOn();
   }
 
   bool isHeater140Enabled() {
-    return mHeater140Enabled;
+    return heater140Switch.isOn();
   }
 
   Json getJson() {
@@ -881,21 +937,17 @@ HeaterStatus heaterStatus = HeaterStatus();
 
 struct PumpStatus {
   private:
-  bool mPumpEnabled;
 
   public:
-  PumpStatus() : mPumpEnabled(false) {}
+  PumpStatus() {}
   ~PumpStatus() {}
 
   void setPumpMode(bool pumpEnabled) {
-    if(mPumpEnabled != pumpEnabled) {
-      mPumpEnabled = pumpEnabled;
-      setPinOutput(pumpPin, pumpEnabled);
-    }
+    pumpSwitch.setState(pumpEnabled);
   }
 
   bool isPumpEnabled() {
-    return mPumpEnabled;
+    return pumpSwitch.isOn();
   }
 
   Json getJson() {
@@ -1445,12 +1497,12 @@ void setupServer() {
     resultJson["ventStatus"] = ventStatus.getJson();
     resultJson["ventStatistics"] = ventManager.getJson();
     resultJson["other"] = otherParams.getJson();
-    resultJson["productionPlans"] = productionPlansManager.getJson();
     resultJson["humiditySensor"] = humiditySensor.getJson();
     resultJson["temperatureSensor"] = temperatureSensor.getJson();
     resultJson["upMoveDetector"] = upMoveDetector.getJson();
     resultJson["middleMoveDetector"] = middleMoveDetector.getJson();
     resultJson["bottomMoveDetector"] = bottomMoveDetector.getJson();
+    resultJson["productionPlans"] = productionPlansManager.getJson();
 
     request->send(200, "application/json", resultJson.toString());
   });
@@ -1466,12 +1518,12 @@ void setupServer() {
     resultJson["ventStatus"] = ventStatus.getDocumentationJson();
     resultJson["ventStatistics"] = ventManager.getDocumentationJson();
     resultJson["other"] = otherParams.getDocumentationJson();
-    resultJson["productionPlans"] = productionPlansManager.getDocumentationJson();
     resultJson["humiditySensor"] = humiditySensor.getDocumentationJson();
     resultJson["temperatureSensor"] = temperatureSensor.getDocumentationJson();
     resultJson["upMoveDetector"] = upMoveDetector.getDocumentationJson();
     resultJson["middleMoveDetector"] = middleMoveDetector.getDocumentationJson();
     resultJson["bottomMoveDetector"] = bottomMoveDetector.getDocumentationJson();
+    resultJson["productionPlans"] = productionPlansManager.getDocumentationJson();
 
     request->send(200, "application/json", resultJson.toString());
   });
