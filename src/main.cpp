@@ -269,6 +269,8 @@ PumpConfig pumpConfig = PumpConfig();
 
 struct VentConfig {
   public:
+  int periodicVentilationDelay;
+  int periodicVentilationTime;
   int humidityReadDelay;
   float bottomHumidityThreshold;
   float highHumidityThreshold;
@@ -280,11 +282,13 @@ struct VentConfig {
   bool ventAutoMode;
   bool ventEnabled;
 
-  VentConfig() : humidityReadDelay(30), bottomHumidityThreshold(55), highHumidityThreshold(70), maxWorkTime(30 * 60), minDelayTime(60 * 60), nightStartHour(23), nightEndHour(6), useHighGear(false), ventAutoMode(true), ventEnabled(false) {}
+  VentConfig() : periodicVentilationDelay(3 * 60 * 60), periodicVentilationTime(5 * 60), humidityReadDelay(30), bottomHumidityThreshold(55), highHumidityThreshold(70), maxWorkTime(30 * 60), minDelayTime(60 * 60), nightStartHour(23), nightEndHour(6), useHighGear(false), ventAutoMode(true), ventEnabled(false) {}
   ~VentConfig() {}
 
   Json getJson() {
     Json json;
+    json["periodicVentilationDelay"] = periodicVentilationDelay;
+    json["periodicVentilationTime"] = periodicVentilationTime;
     json["humidityReadDelay"] = humidityReadDelay;
     json["bottomHumidityThreshold"] = bottomHumidityThreshold;
     json["highHumidityThreshold"] = highHumidityThreshold;
@@ -300,6 +304,8 @@ struct VentConfig {
 
   Json getDocumentationJson() {
     Json json;
+    json["periodicVentilationDelay"] = "Częstotliwość okresowej wentylacji w sekundach";
+    json["periodicVentilationTime"] = "Czas trwania okresowej wentylacji w sekundach";
     json["humidityReadDelay"] = "Częstotliwość odczytu wilgotności w sekundach";
     json["bottomHumidityThreshold"] = "Próg wilgotności poniżej którego wyłączamy wentylację";
     json["highHumidityThreshold"] = "Próg wilgotności powyżej którego włączamy wentylacje bez wzgledu na ograniczenia czasowe (maxWorkTime i minDelayTime)";
@@ -315,6 +321,14 @@ struct VentConfig {
 
   bool updateParams(AsyncWebServerRequest* request) {
     bool hasChanges = false;
+    if (request->hasParam("periodicVentilationDelay")) {
+      periodicVentilationDelay = request->getParam("periodicVentilationDelay")->value().toInt();
+      hasChanges = true;
+    }
+    if (request->hasParam("periodicVentilationTime")) {
+      periodicVentilationTime = request->getParam("periodicVentilationTime")->value().toInt();
+      hasChanges = true;
+    }
     if (request->hasParam("humidityReadDelay")) {
       humidityReadDelay = request->getParam("humidityReadDelay")->value().toInt();
       hasChanges = true;
@@ -375,6 +389,7 @@ struct HumiditySensor {
 
   float readHumidity() {
     float humidity = -1.0f;
+    delay(100);
     if(serialInitialized && sht.measure() == SHT4X_STATUS_OK && sht.RHcrcOK) {
       humidity = sht.RHtoPercent();
     }
@@ -1274,6 +1289,15 @@ struct VentManager {
       disableVent("night mode");
       return;
     }
+    if(lastVentWorkTime == 0 || lastVentWorkTime + ventConfig.periodicVentilationDelay > DateTime.getTime()) {
+      if(!ventStatus.isEnabled()) {
+        enableVent("periodic ventilation", highGear);
+      } else if(ventEnableTime + ventConfig.periodicVentilationTime <= DateTime.getTime()) {
+        disableVent("periodic ventilation time exceeded");
+      }
+      return;
+    }
+
     float humidity = humiditySensor.readHumidityIfNeeded();
     if(!humiditySensor.isHumidityValid(humidity)) {
       disableVent("invalid humidity");
@@ -1304,7 +1328,6 @@ struct VentManager {
 
   Json getJson() {
     Json json;
-    json["humiditySensor"] = humiditySensor.getJson();
     json["ventOnTime"] = int(ventOnTime);
     json["lastVentEnableTime"] = DateTimeParts::from(ventEnableTime).toString();
     json["lastVentWorkTime"] = DateTimeParts::from(lastVentWorkTime).toString();
@@ -1314,7 +1337,6 @@ struct VentManager {
 
   Json getDocumentationJson() {
     Json json;
-    json["humiditySensor"] = humiditySensor.getDocumentationJson();
     json["ventOnTime"] = "Czas pracy wentylacji w sekundach aktualnego dnia";
     json["lastVentEnableTime"] = "Czas ostatniego włączenia wentylacji";
     json["lastVentWorkTime"] = "Czas ostatniej pracy wentylacji (zarejestrowana w momencie wyłączenia)";
@@ -1371,6 +1393,8 @@ void setupServer() {
     resultJson["ventStatistics"] = ventManager.getJson();
     resultJson["other"] = otherParams.getJson();
     resultJson["productionPlans"] = productionPlansManager.getJson();
+    resultJson["humiditySensor"] = humiditySensor.getJson();
+    resultJson["temperatureSensor"] = temperatureSensor.getJson();
 
     request->send(200, "application/json", resultJson.toString());
   });
@@ -1387,6 +1411,8 @@ void setupServer() {
     resultJson["ventStatistics"] = ventManager.getDocumentationJson();
     resultJson["other"] = otherParams.getDocumentationJson();
     resultJson["productionPlans"] = productionPlansManager.getDocumentationJson();
+    resultJson["humiditySensor"] = humiditySensor.getDocumentationJson();
+    resultJson["temperatureSensor"] = temperatureSensor.getDocumentationJson();
 
     request->send(200, "application/json", resultJson.toString());
   });
