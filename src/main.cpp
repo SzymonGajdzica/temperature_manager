@@ -17,6 +17,9 @@
 
 #define version 6
 
+#define storageStartGuard 0xDEADBEEF
+#define storageEndGuard 0xBEEFDEAD
+
 const int maxNumberOfRetries = 10;
 const int httpReadDelay = 30000;
 time_t lastInternetInterruption = 0;
@@ -790,11 +793,18 @@ HeaterConfig heaterConfig = HeaterConfig();
 
 struct StorageConfig {
   public:
+  uint32_t mStorageStartGuard;
   HeaterConfig heaterConfig;
   PumpConfig pumpConfig;
   VentConfig ventConfig;
-  StorageConfig(HeaterConfig heaterConfig, PumpConfig pumpConfig, VentConfig ventConfig) : heaterConfig(heaterConfig), pumpConfig(pumpConfig), ventConfig(ventConfig) {}
+  uint32_t mStorageEndGuard;
+  StorageConfig(HeaterConfig heaterConfig, PumpConfig pumpConfig, VentConfig ventConfig) : mStorageStartGuard(storageStartGuard), heaterConfig(heaterConfig), pumpConfig(pumpConfig), ventConfig(ventConfig), mStorageEndGuard(storageEndGuard) {}
   ~StorageConfig() {}
+
+  bool isValid() {
+    return mStorageStartGuard == storageStartGuard && mStorageEndGuard == storageEndGuard;
+  }
+
 };
 
 struct HourProductionPlan {
@@ -1583,6 +1593,17 @@ void setupServer() {
   server.begin();
 }
 
+void initializeLocalStorage() {
+  StorageConfig storageConfig = StorageConfig(heaterConfig, pumpConfig, ventConfig);
+  EEPROM.begin(sizeof(StorageConfig));
+  EEPROM.get(0, storageConfig);
+  if(storageConfig.isValid()) {
+    pumpConfig = storageConfig.pumpConfig;
+    heaterConfig = storageConfig.heaterConfig;
+    ventConfig = storageConfig.ventConfig;
+  }
+}
+
 void setup() {
   heater140Switch.begin();
   heater200Switch1.begin();
@@ -1602,18 +1623,7 @@ void setup() {
   delay(1000);
   temperatureSensor.begin();
   humiditySensor.begin();
-  StorageConfig storageConfig = StorageConfig(heaterConfig, pumpConfig, ventConfig);
-  EEPROM.begin(sizeof(StorageConfig));
-  if(EEPROM.read(0) == 0xFF) {
-    println("EEPROM is empty, writing default config");
-    EEPROM.put(0, storageConfig);
-    EEPROM.commit();
-  }
-  EEPROM.get(0, storageConfig);
-  pumpConfig = storageConfig.pumpConfig;
-  heaterConfig = storageConfig.heaterConfig;
-  ventConfig = storageConfig.ventConfig;
-  
+  initializeLocalStorage();
   setupLocalTimefNeeded();
   setupServer();
   println("Finished setup");
