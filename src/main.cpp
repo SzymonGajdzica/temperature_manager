@@ -15,9 +15,7 @@
 // 200L, 2KW od 50C do 70C w 140 minut
 // 140L, 2KW od 10C do 70C w 5h
 
-//todo dodac grzanie miedzy 13 a 15
-
-#define version 4
+#define version 5
 
 const int maxNumberOfRetries = 10;
 const int httpReadDelay = 30000;
@@ -158,7 +156,7 @@ struct PumpConfig {
   bool pumpAutoMode;
   bool pumpEnabled;
 
-  PumpConfig() : workingTemperatureReadDelay(2), idleTemperatureReadDelay(120), pumpOffTemperature(30), pumpOnTimeBottomBathroom(10), pumpOnTimeMiddleBathroom(10), pumpOnTimeUpKitchen(20), pumpOnTimeUpBathroom(20), pumpDelayTime(60 * 30), pumpLowTemperatureGuard(5), pumpOnTimeGuard(60 * 2), pumpAutoMode(true), pumpEnabled(false) {}
+  PumpConfig() : workingTemperatureReadDelay(2), idleTemperatureReadDelay(120), pumpOffTemperature(30), pumpOnTimeBottomBathroom(0), pumpOnTimeMiddleBathroom(120), pumpOnTimeUpKitchen(0), pumpOnTimeUpBathroom(0), pumpDelayTime(60 * 30), pumpLowTemperatureGuard(5), pumpOnTimeGuard(120), pumpAutoMode(true), pumpEnabled(false) {}
   ~PumpConfig() {}
 
   int getPumpOnTime(int index) {
@@ -721,6 +719,10 @@ struct HourProductionPlan {
     return heater200Enabled2;
   }
 
+  bool getHeater200EnabledAny() {
+    return heater200Enabled1 || heater200Enabled2;
+  }
+
   bool getHeater140Enabled() {
     return heater140Enabled;
   }
@@ -794,15 +796,6 @@ struct HeaterStatus {
 
   bool isHeater140Enabled() {
     return mHeater140Enabled;
-  }
-
-  void printState() {
-    print("Heater1 200L: ");
-    print(String(isHeater200Enabled1()));
-    print(", Heater2 200L: ");
-    print(String(isHeater200Enabled2()));
-    print(", Heater 140L: ");
-    println(String(isHeater140Enabled()));
   }
 
   Json getJson() {
@@ -946,14 +939,26 @@ struct ProductionPlansManager {
       }
       hourProductionPlans->set(i, hourProductionPlan);
     }
-    
-    if(counter200 < heaterConfig.numberOfHours200) {
-      int missingHours = heaterConfig.numberOfHours200 - counter200;
-      for (int i = 0; i < hourProductionPlans->size(); i++) {
-        HourProductionPlan hourProductionPlan = hourProductionPlans->get(i);
-        if(hourProductionPlan.getHour() < 6 && hourProductionPlan.getHour() >= 6 - missingHours) { //todo
-          hourProductionPlan.enableHeater200();
-          hourProductionPlans->set(i, hourProductionPlan);
+    int missingHours = heaterConfig.numberOfHours200 - counter200;
+    int nightHour1 = 14;
+    int nightHour2 = 5;
+    while (missingHours > 0) {
+      if(nightHour1 >= 13) {
+        HourProductionPlan hourProductionPlan1 = hourProductionPlans->get(nightHour1);
+        if(!hourProductionPlan1.getHeater200EnabledAny()) {
+          hourProductionPlan1.enableHeater200();
+          hourProductionPlans->set(nightHour1, hourProductionPlan1);
+          nightHour1--;
+          missingHours--;
+        }
+      }
+      if(missingHours > 0 && nightHour2 >= 0) {
+        HourProductionPlan hourProductionPlan2 = hourProductionPlans->get(nightHour2);
+        if(!hourProductionPlan2.getHeater200EnabledAny()) {
+          hourProductionPlan2.enableHeater200();
+          hourProductionPlans->set(nightHour2, hourProductionPlan2);
+          nightHour2--;
+          missingHours--;
         }
       }
     }
@@ -1005,25 +1010,6 @@ struct ProductionPlansManager {
     mHourProductionPlans = createProductionPlans();
     mProductionPlansDay = DateTime.getParts().getYearDay();
     mProductionPlansCreateDate = DateTime.toISOString();
-    print("Updated production plans for ");
-    print(String(mHourProductionPlans->size()));
-    println(" hours");
-  }
-
-  void printState() {
-    for (int i = 0; i < mHourProductionPlans->size(); i++) {
-      HourProductionPlan plan = mHourProductionPlans->get(i);
-      print("Hour: ");
-      print(String(plan.getHour()));
-      print(", Production: ");
-      print(String(plan.getProduction()));
-      print(", Heater1 200L: ");
-      print(String(plan.getHeater200Enabled1()));
-      print(", Heater2 200L: ");
-      print(String(plan.getHeater200Enabled2()));
-      print(", Heater 140L: ");
-      println(String(plan.getHeater140Enabled()));
-    }
   }
 
   Json getJson() {
@@ -1073,7 +1059,6 @@ struct ProductionPlansManager {
     if(!foundHour) {
       heaterStatus.disableAllHeaters();
     }
-    heaterStatus.printState();
   }
 
   LinkedList<HourProductionPlan>* getProductionPlans() {
@@ -1522,7 +1507,6 @@ void loop() {
   if(productionPlansManager.shouldUpdatePlans()) {
     heaterStatus.disableAllHeaters();
     productionPlansManager.updateProductionPlansIfNeeded();
-    productionPlansManager.printState();
   }
   if(heaterStatus.shouldUpdateHeaters()) {
     productionPlansManager.executeProductionPlan();
