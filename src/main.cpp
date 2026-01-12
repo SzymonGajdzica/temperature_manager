@@ -35,13 +35,6 @@ time_t lastInternetInterruption = 0;
 #define ventPin 33
 #define ventGearPin 32
 
-#define moveDetectorPinsSize 3
-int moveDetectorPins[] = {moveDetectorBottomPin, moveDetectorMiddlePin, moveDetectorUpPin}; 
-String moveDetectorNames[] = {"bottomBathroom", "middleBathroom", "upBathroom"}; 
-
-Bounce2::Button upButtonKitchen = Bounce2::Button();
-AsyncWebServer server(80);
-
 void setPinOutput(int pin, bool value) {
   if (value) {
     digitalWrite(pin, HIGH);
@@ -51,10 +44,6 @@ void setPinOutput(int pin, bool value) {
   delay(1000);
 }
 
-bool isMoveDetected(int pin) {
-  return digitalRead(pin) == HIGH;
-}
-
 void print(String message) {
   Serial.print(message);
 }
@@ -62,6 +51,9 @@ void print(String message) {
 void println(String message) {
   Serial.println(message);
 }
+
+Bounce2::Button upButtonKitchen = Bounce2::Button();
+AsyncWebServer server(80);
 
 bool isWifiConnected() {
   return WiFi.status() == WL_CONNECTED;
@@ -373,6 +365,75 @@ struct VentConfig {
 };
 
 VentConfig ventConfig = VentConfig();
+
+struct MoveDetector {
+  private:
+  int pin;
+  String name;
+  bool currentState;
+  time_t lastChangeTime;
+
+  bool isMoveDetected() {
+    return digitalRead(pin) == HIGH;
+  }
+
+  public:
+  MoveDetector(int pin, String name) : pin(pin), name(name), currentState(false), lastChangeTime(0) {}
+  ~MoveDetector() {}
+
+  void begin() {
+    pinMode(pin, INPUT);
+  }
+
+  void update() {
+    bool oldState = currentState;
+    currentState = isMoveDetected();
+    if(oldState != currentState) {
+      lastChangeTime = DateTime.getTime();
+    }
+  }
+
+  bool getCurrentState() {
+    return currentState;
+  }
+
+  String getName() {
+    return name;
+  }
+
+  time_t getLastChangeTime() {
+    return lastChangeTime;
+  }
+
+  Json getJson() {
+    Json json;
+    json["name"] = name;
+    json["currentState"] = currentState;
+    json["lastChangeTime"] = DateTimeParts::from(lastChangeTime).toString();
+    return json;
+  }
+
+  Json getDocumentationJson() {
+    Json json;
+    json["name"] = "Nazwa czujnika ruchu";
+    json["currentState"] = "Aktualny stan czujnika ruchu (true - wykryto ruch, false - brak ruchu)";
+    json["lastChangeTime"] = "Czas ostatniej zmiany stanu czujnika ruchu";
+    return json;
+  }
+
+};
+
+#define numberOfMoveDetectors 3
+
+MoveDetector bottomMoveDetector = MoveDetector(moveDetectorBottomPin, "Łazienka dół");
+MoveDetector middleMoveDetector = MoveDetector(moveDetectorMiddlePin, "Łazienka środek");
+MoveDetector upMoveDetector = MoveDetector(moveDetectorUpPin, "Łazienka góra");
+
+MoveDetector moveDetectors[] = {
+  bottomMoveDetector,
+  middleMoveDetector,
+  upMoveDetector
+};
 
 struct HumiditySensor {
   private:
@@ -1088,7 +1149,7 @@ ProductionPlansManager productionPlansManager = ProductionPlansManager();
 struct PumpManager {
   private:
   int dayOfYear = -1;
-  int triggerCounters[moveDetectorPinsSize + 1];
+  int triggerCounters[numberOfMoveDetectors + 1];
   int pumpOnTime = 0;
   time_t pumpEnableTime = 0;
   time_t pumpDisableTime = 0;
@@ -1119,7 +1180,7 @@ struct PumpManager {
   void resetStats() {
     disablePump("stats reset");
     dayOfYear = DateTime.getParts().getYearDay();
-    for (int i = 0; i < moveDetectorPinsSize; i++) {
+    for (int i = 0; i < numberOfMoveDetectors; i++) {
       triggerCounters[i] = 0;
     }
     pumpUptime = 0;
@@ -1175,12 +1236,13 @@ struct PumpManager {
       }
     }
 
-    for (int i = 0; i < moveDetectorPinsSize; i++) {
-      if(isMoveDetected(moveDetectorPins[i])) {
+    for (int i = 0; i < numberOfMoveDetectors; i++) {
+      MoveDetector moveDetector = moveDetectors[i];
+      if(moveDetector.getCurrentState()) {
         int time = pumpConfig.getPumpOnTime(i);
         if(time > 0) {
           triggerCounters[i]++;
-          enablePump(time, "motion detected at " + String(moveDetectorNames[i]));
+          enablePump(time, "motion detected at " + moveDetector.getName());
           return;
         }
       }
@@ -1193,7 +1255,6 @@ struct PumpManager {
 
   Json getJson() {
     Json json;
-    json["temperatureSensor"] = temperatureSensor.getJson();
     json["pumpUptime"] = int(pumpUptime);
     json["lastPumpEnableTime"] = DateTimeParts::from(pumpEnableTime).toString();
     json["bottomBathroomTriggers"] = triggerCounters[0];
@@ -1206,7 +1267,6 @@ struct PumpManager {
 
   Json getDocumentationJson() {
     Json json;
-    json["temperatureSensor"] = temperatureSensor.getDocumentationJson();
     json["pumpUptime"] = "Czas pracy pompy w sekundach aktualnego dnia";
     json["lastPumpEnableTime"] = "Czas ostatniego włączenia pompy";
     json["bottomBathroomTriggers"] = "Liczba uruchomień pompy z czujnika dolnego (łazienka) aktualnego dnia";
@@ -1388,6 +1448,9 @@ void setupServer() {
     resultJson["productionPlans"] = productionPlansManager.getJson();
     resultJson["humiditySensor"] = humiditySensor.getJson();
     resultJson["temperatureSensor"] = temperatureSensor.getJson();
+    resultJson["upMoveDetector"] = upMoveDetector.getJson();
+    resultJson["middleMoveDetector"] = middleMoveDetector.getJson();
+    resultJson["bottomMoveDetector"] = bottomMoveDetector.getJson();
 
     request->send(200, "application/json", resultJson.toString());
   });
@@ -1406,6 +1469,9 @@ void setupServer() {
     resultJson["productionPlans"] = productionPlansManager.getDocumentationJson();
     resultJson["humiditySensor"] = humiditySensor.getDocumentationJson();
     resultJson["temperatureSensor"] = temperatureSensor.getDocumentationJson();
+    resultJson["upMoveDetector"] = upMoveDetector.getDocumentationJson();
+    resultJson["middleMoveDetector"] = middleMoveDetector.getDocumentationJson();
+    resultJson["bottomMoveDetector"] = bottomMoveDetector.getDocumentationJson();
 
     request->send(200, "application/json", resultJson.toString());
   });
@@ -1473,9 +1539,9 @@ void setup() {
   pinMode(pumpPin, OUTPUT);
   pinMode(ventPin, OUTPUT);
   pinMode(ventGearPin, OUTPUT);
-  pinMode(moveDetectorBottomPin, INPUT);
-  pinMode(moveDetectorMiddlePin, INPUT);
-  pinMode(moveDetectorUpPin, INPUT);
+  bottomMoveDetector.begin();
+  middleMoveDetector.begin();
+  upMoveDetector.begin();
   digitalWrite(heater200Pin1, LOW);
   digitalWrite(heater200Pin2, LOW);
   digitalWrite(heater140Pin, LOW);
