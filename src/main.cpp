@@ -922,6 +922,15 @@ struct ProductionPlansManager {
     return result;
   }
 
+  int getIndexOfHour(LinkedList<HourProductionPlan>* hourProductionPlans, int hour) {
+    for (int i = 0; i < hourProductionPlans->size(); i++) {
+      if (hourProductionPlans->get(i).getHour() == hour) {
+        return i;
+      }
+    }
+    return -1;
+  }
+
   void fillProductionPlan(LinkedList<HourProductionPlan>* hourProductionPlans) {
     hourProductionPlans->sort(compareHourPredictionByValueDesc);
     int counter140 = 0;
@@ -943,20 +952,23 @@ struct ProductionPlansManager {
     int nightHour1 = 14;
     int nightHour2 = 5;
     while (missingHours > 0) {
-      if(nightHour1 >= 13) {
-        HourProductionPlan hourProductionPlan1 = hourProductionPlans->get(nightHour1);
+      println("Filling missing heater200 hour, missing: " + String(missingHours));
+      int index1 = getIndexOfHour(hourProductionPlans, nightHour1);
+      if(missingHours > 0 && nightHour1 >= 13 && index1 >= 0) {
+        HourProductionPlan hourProductionPlan1 = hourProductionPlans->get(index1);
         if(!hourProductionPlan1.getHeater200EnabledAny()) {
           hourProductionPlan1.enableHeater200();
-          hourProductionPlans->set(nightHour1, hourProductionPlan1);
+          hourProductionPlans->set(index1, hourProductionPlan1);
           nightHour1--;
           missingHours--;
         }
       }
-      if(missingHours > 0 && nightHour2 >= 0) {
-        HourProductionPlan hourProductionPlan2 = hourProductionPlans->get(nightHour2);
+      int index2 = getIndexOfHour(hourProductionPlans, nightHour2);
+      if(missingHours > 0 && nightHour2 >= 0 && index2 >= 0) {
+        HourProductionPlan hourProductionPlan2 = hourProductionPlans->get(index2);
         if(!hourProductionPlan2.getHeater200EnabledAny()) {
           hourProductionPlan2.enableHeater200();
-          hourProductionPlans->set(nightHour2, hourProductionPlan2);
+          hourProductionPlans->set(index2, hourProductionPlan2);
           nightHour2--;
           missingHours--;
         }
