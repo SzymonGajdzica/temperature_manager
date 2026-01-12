@@ -105,11 +105,7 @@ struct Switch {
   time_t lastDisableTime;
 
   void setPinOutput(int pin, bool value) {
-    if (value) {
-      digitalWrite(pin, HIGH);
-    } else {
-      digitalWrite(pin, LOW);
-    }
+    digitalWrite(pin, value ? HIGH : LOW);
     delay(1000);
   }
 
@@ -1631,6 +1627,9 @@ void setup() {
 
 void loop() {
   upButtonKitchen.update();
+  bottomMoveDetector.update();
+  middleMoveDetector.update();
+  upMoveDetector.update();
   pumpManager.invalidate();
   ventManager.invalidate();
   setupInternetConnectionIfNeeded();
