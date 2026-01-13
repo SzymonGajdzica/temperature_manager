@@ -24,8 +24,7 @@ const int maxNumberOfRetries = 10;
 const int httpReadDelay = 30000;
 time_t lastInternetInterruption = 0;
 
-#define nightHoursSize 9
-int nightHours[] = {13, 22, 5, 14, 23, 4, 3, 2, 1};
+#define nightHoursSize 12
 
 #define humidityPinSDA 17
 #define humidityPinSCL 19
@@ -737,8 +736,18 @@ struct HeaterConfig {
   bool use2Heaters200;
   int numberOfHours140;
   float minHourProduction140;
+  int nightHours[nightHoursSize];
 
-  HeaterConfig() : minHourProduction200(2.8), numberOfHours200(3), use2Heaters200(false), numberOfHours140(5), minHourProduction140(2.5) {}
+  HeaterConfig() : minHourProduction200(2.8), numberOfHours200(3), use2Heaters200(false), numberOfHours140(5), minHourProduction140(2.5) {
+    for (int i = 0; i < nightHoursSize; i++) {
+      nightHours[i] = 0;
+    }
+    int defaults[] = {13, 22, 5, 14, 23, 4, 3, 2, 1};
+    int defaultsCount = 9;
+    for (int i = 0; i < defaultsCount; i++) {
+      nightHours[i] = defaults[i];
+    }
+  }
   ~HeaterConfig() {}
 
   Json getJson() {
@@ -748,6 +757,17 @@ struct HeaterConfig {
     json["use2Heaters200"] = use2Heaters200;
     json["numberOfHours140"] = numberOfHours140;
     json["minHourProduction140"] = minHourProduction140;
+    String nightHoursString = "";
+    for (int i = 0; i < nightHoursSize; i++) {
+      int nightHour = nightHours[i];
+      if(nightHour > 0) {
+        nightHoursString += String(nightHours[i]);
+        if (i < nightHoursSize - 1 && nightHours[i + 1] != -1) {
+          nightHoursString += ",";
+        }
+      }
+    }
+    json["nightHours"] = nightHoursString;
     return json;
   }
 
@@ -758,11 +778,33 @@ struct HeaterConfig {
     json["use2Heaters200"] = "Czy używamy dwóch grzałek do zbiornika 200L (jeśli tak, to obie grzałki będą włączane jednocześnie, jeśli nie, to grzałki będą włączane naprzemiennie w zależności od parzystości dnia w roku)";
     json["numberOfHours140"] = "Liczba godzin w ciągu doby, przez które chcemy grzać zbiornik 140L (godziny z największą produkcją energii)";
     json["minHourProduction140"] = "Minimalna produkcja energii w kWh przy której włączamy grzanie zbiornika 140L (jeśli produkcja jest mniejsza, grzanie nie zostanie włączone)";
+    json["nightHours"] = "Godziny nocne, w których grzejemy zbiornik 200L w przypadku gdy produkcja energii jest niska (oddzielone przecinkami).";
     return json;
   }
 
   bool updateParams(AsyncWebServerRequest* request) {
     bool hasChanges = false;
+    if(request->hasParam("nightHours")) {
+      String nightHoursString = request->getParam("nightHours")->value();
+      for (int i = 0; i < nightHoursSize; i++) {
+        nightHours[i] = 0;
+      }
+      int index = 0;
+      int start = 0;
+
+      while (index < nightHoursSize) {
+        int separatorIndex = nightHoursString.indexOf(',', start);
+
+        if (separatorIndex == -1) {
+          nightHours[index++] = nightHoursString.substring(start).toInt();
+          break;
+        }
+
+        nightHours[index++] = nightHoursString.substring(start, separatorIndex).toInt();
+        start = separatorIndex + 1;
+      }
+      hasChanges = true;
+    }
     if (request->hasParam("minHourProduction200")) {
       minHourProduction200 = request->getParam("minHourProduction200")->value().toFloat();
       hasChanges = true;
@@ -1072,16 +1114,19 @@ struct ProductionPlansManager {
     int missingHours = heaterConfig.numberOfHours200 - counter200;
     int nightHourIndex = 0;
     while (missingHours > 0 && nightHourIndex < nightHoursSize) {
-      int index = getIndexOfHour(hourProductionPlans, nightHours[nightHourIndex]);
-      if(index >= 0) {
-        HourProductionPlan hourProductionPlan1 = hourProductionPlans->get(index);
-        if(!hourProductionPlan1.getHeater200EnabledAny()) {
-          hourProductionPlan1.enableHeater200();
-          hourProductionPlans->set(index, hourProductionPlan1);
-          missingHours--;
+      int hour = heaterConfig.nightHours[nightHourIndex];
+      if(hour > 0) {
+        int index = getIndexOfHour(hourProductionPlans, hour);
+        if(index >= 0) {
+          HourProductionPlan hourProductionPlan1 = hourProductionPlans->get(index);
+          if(!hourProductionPlan1.getHeater200EnabledAny()) {
+            hourProductionPlan1.enableHeater200();
+            hourProductionPlans->set(index, hourProductionPlan1);
+            missingHours--;
+          }
         }
-        nightHourIndex++;
       }
+      nightHourIndex++;
     }
 
     hourProductionPlans->sort(compareHourPredictionByHourAsc);
