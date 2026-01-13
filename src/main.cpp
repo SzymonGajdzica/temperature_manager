@@ -24,6 +24,9 @@ const int maxNumberOfRetries = 10;
 const int httpReadDelay = 30000;
 time_t lastInternetInterruption = 0;
 
+#define nightHoursSize 9
+int nightHours[] = {13, 22, 5, 14, 23, 4, 3, 2, 1};
+
 #define humidityPinSDA 17
 #define humidityPinSCL 19
 #define temperaturePin 18
@@ -1067,29 +1070,17 @@ struct ProductionPlansManager {
       hourProductionPlans->set(i, hourProductionPlan);
     }
     int missingHours = heaterConfig.numberOfHours200 - counter200;
-    int nightHour1 = 14;
-    int nightHour2 = 5;
-    while (missingHours > 0) {
-      println("Filling missing heater200 hour, missing: " + String(missingHours));
-      int index1 = getIndexOfHour(hourProductionPlans, nightHour1);
-      if(missingHours > 0 && nightHour1 >= 13 && index1 >= 0) {
-        HourProductionPlan hourProductionPlan1 = hourProductionPlans->get(index1);
+    int nightHourIndex = 0;
+    while (missingHours > 0 && nightHourIndex < nightHoursSize) {
+      int index = getIndexOfHour(hourProductionPlans, nightHours[nightHourIndex]);
+      if(index >= 0) {
+        HourProductionPlan hourProductionPlan1 = hourProductionPlans->get(index);
         if(!hourProductionPlan1.getHeater200EnabledAny()) {
           hourProductionPlan1.enableHeater200();
-          hourProductionPlans->set(index1, hourProductionPlan1);
-          nightHour1--;
+          hourProductionPlans->set(index, hourProductionPlan1);
           missingHours--;
         }
-      }
-      int index2 = getIndexOfHour(hourProductionPlans, nightHour2);
-      if(missingHours > 0 && nightHour2 >= 0 && index2 >= 0) {
-        HourProductionPlan hourProductionPlan2 = hourProductionPlans->get(index2);
-        if(!hourProductionPlan2.getHeater200EnabledAny()) {
-          hourProductionPlan2.enableHeater200();
-          hourProductionPlans->set(index2, hourProductionPlan2);
-          nightHour2--;
-          missingHours--;
-        }
+        nightHourIndex++;
       }
     }
 
@@ -1395,7 +1386,7 @@ struct VentManager {
       return;
     }
     int currentHour = DateTime.getParts().getHours();
-    if(currentHour >= ventConfig.nightStartHour || currentHour <= ventConfig.nightEndHour) {
+    if(currentHour >= ventConfig.nightStartHour || currentHour < ventConfig.nightEndHour) {
       disableVent("night mode");
       return;
     }
