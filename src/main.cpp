@@ -20,6 +20,12 @@
 #define storageStartGuard 0xDEADBEEF
 #define storageEndGuard 0xBEEFDEAD
 
+#define ssid "Dom"
+#define password "123456789a"
+#define hostId1 100
+#define hostId2 181
+
+#define loopDelay 1
 const int maxNumberOfRetries = 10;
 const int httpReadDelay = 30000;
 
@@ -68,9 +74,9 @@ struct WifiManager {
   }
 
   void setupInternetConnection() {
-    IPAddress localIP(192, 168, 100, 181);
-    IPAddress gateway(192,168,100,1); 
-    IPAddress subnet(255,255,0,0); 
+    IPAddress localIP(192, 168, hostId1, hostId2);
+    IPAddress gateway(192, 168, hostId1, 1); 
+    IPAddress subnet(255, 255, 0, 0); 
     IPAddress primaryDNS(8, 8, 8, 8);
     IPAddress secondaryDNS(8, 8, 4, 4); 
     while (!WiFi.config(localIP, gateway, subnet, primaryDNS, secondaryDNS)) {
@@ -456,14 +462,14 @@ struct MoveDetector {
   int pin;
   String name;
   bool currentState;
-  time_t lastChangeTime;
+  time_t lastDetectionTime;
 
   bool isMoveDetected() {
     return digitalRead(pin) == HIGH;
   }
 
   public:
-  MoveDetector(int pin, String name) : pin(pin), name(name), currentState(false), lastChangeTime(0) {}
+  MoveDetector(int pin, String name) : pin(pin), name(name), currentState(false), lastDetectionTime(0) {}
   ~MoveDetector() {}
 
   void begin() {
@@ -473,8 +479,8 @@ struct MoveDetector {
   void update() {
     bool oldState = currentState;
     currentState = isMoveDetected();
-    if(oldState != currentState) {
-      lastChangeTime = DateTime.getTime();
+    if(oldState != currentState && currentState) {
+      lastDetectionTime = DateTime.getTime();
     }
   }
 
@@ -486,15 +492,15 @@ struct MoveDetector {
     return name;
   }
 
-  time_t getLastChangeTime() {
-    return lastChangeTime;
+  time_t getLastDetectionTime() {
+    return lastDetectionTime;
   }
 
   Json getJson() {
     Json json;
     json["name"] = name;
     json["currentState"] = currentState;
-    json["lastChangeTime"] = DateTimeParts::from(lastChangeTime).toString();
+    json["lastDetectionTime"] = DateTimeParts::from(lastDetectionTime).toString();
     return json;
   }
 
@@ -502,7 +508,7 @@ struct MoveDetector {
     Json json;
     json["name"] = "Nazwa czujnika ruchu";
     json["currentState"] = "Aktualny stan czujnika ruchu (true - wykryto ruch, false - brak ruchu)";
-    json["lastChangeTime"] = "Czas ostatniej zmiany stanu czujnika ruchu";
+    json["lastDetectionTime"] = "Czas ostatniego wykrycia ruchu";
     return json;
   }
 
@@ -514,10 +520,10 @@ MoveDetector bottomMoveDetector = MoveDetector(moveDetectorBottomPin, "Łazienka
 MoveDetector middleMoveDetector = MoveDetector(moveDetectorMiddlePin, "Łazienka środek");
 MoveDetector upMoveDetector = MoveDetector(moveDetectorUpPin, "Łazienka góra");
 
-MoveDetector moveDetectors[] = {
-  bottomMoveDetector,
-  middleMoveDetector,
-  upMoveDetector
+MoveDetector* moveDetectors[numberOfMoveDetectors] = {
+  &bottomMoveDetector,
+  &middleMoveDetector,
+  &upMoveDetector
 };
 
 struct HumiditySensor {
@@ -1336,14 +1342,13 @@ struct PumpManager {
         return;
       }
     }
-
     for (int i = 0; i < numberOfMoveDetectors; i++) {
-      MoveDetector moveDetector = moveDetectors[i];
-      if(moveDetector.getCurrentState()) {
+      MoveDetector* moveDetector = moveDetectors[i];
+      if(moveDetector->getCurrentState()) {
         int time = pumpConfig.getPumpOnTime(i);
         if(time > 0) {
           triggerCounters[i]++;
-          enablePump(time, "motion detected at " + moveDetector.getName());
+          enablePump(time, "motion detected at " + moveDetector->getName());
           return;
         }
       }
@@ -1664,7 +1669,8 @@ void setup() {
   initializeLocalStorage();
   wifiManager.begin();
   setupServer();
-  println("Finished setup");
+  println("Finished setup waiting 5 secs to start loop");
+  delay(5000);
 }
 
 void loop() {
@@ -1681,5 +1687,5 @@ void loop() {
   if(heaterStatus.shouldUpdateHeaters()) {
     productionPlansManager.executeProductionPlan();
   }
-  delay(1);
+  delay(loopDelay);
 }
