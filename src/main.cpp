@@ -22,7 +22,6 @@
 
 const int maxNumberOfRetries = 10;
 const int httpReadDelay = 30000;
-time_t lastInternetInterruption = 0;
 
 #define nightHoursSize 12
 
@@ -48,55 +47,67 @@ void println(String message) {
   Serial.println(message);
 }
 
-bool isWifiConnected() {
-  return WiFi.status() == WL_CONNECTED;
-}
+struct WifiManager {
+  private:
 
-void setupInternetConnectionIfNeeded() {
-  if(isWifiConnected()) {
-    return;
+  bool isWifiConnected() {
+    return WiFi.status() == WL_CONNECTED;
   }
-  IPAddress localIP(192, 168, 100, 181);
-  IPAddress gateway(192,168,100,1); 
-  IPAddress subnet(255,255,0,0); 
-  IPAddress primaryDNS(8, 8, 8, 8);
-  IPAddress secondaryDNS(8, 8, 4, 4); 
-  if (!WiFi.config(localIP, gateway, subnet, primaryDNS, secondaryDNS)) {  
-    while (1) {
+
+  void waitForWifiConnection() {
+    print("Connecting to WiFi");
+
+    while (!isWifiConnected()) {
+      delay(100);
+      print(".");
+    }
+    println(" Connected!");
+
+    print("IP address: ");
+    println(WiFi.localIP().toString());
+  }
+
+  void setupInternetConnection() {
+    IPAddress localIP(192, 168, 100, 181);
+    IPAddress gateway(192,168,100,1); 
+    IPAddress subnet(255,255,0,0); 
+    IPAddress primaryDNS(8, 8, 8, 8);
+    IPAddress secondaryDNS(8, 8, 4, 4); 
+    while (!WiFi.config(localIP, gateway, subnet, primaryDNS, secondaryDNS)) {
         Serial.println("STA Failed to configure");
         delay(10000);
     }
+    WiFi.mode(WIFI_STA);
+    WiFi.setAutoReconnect(true);
+    WiFi.begin("Dom", "123456789a");
+    waitForWifiConnection();
   }
-  WiFi.mode(WIFI_STA);
-  WiFi.begin("Dom", "123456789a");
-  print("Connecting to WiFi");
-  while (!isWifiConnected()) {
-    delay(100);
-    print(".");
-  }
-  lastInternetInterruption = DateTime.getTime();
-  println(" Connected!");
 
-  print("IP address: ");
-  println(WiFi.localIP().toString());
-}
-
-void setupLocalTimefNeeded() {
-  if(DateTime.isTimeValid()) {
-    return;
-  }
-  setupInternetConnectionIfNeeded();
-  DateTime.setTimeZone("CET-1CEST,M3.5.0,M10.5.0/3");
-  println("Fetching current time from server");
-  while(!DateTime.isTimeValid()) {
-    if(!DateTime.begin(20000)) {
-      println("Failed to fetch current time from server");
-      delay(httpReadDelay);
+  void setupLocalTime() {
+    DateTime.setTimeZone("CET-1CEST,M3.5.0,M10.5.0/3");
+    println("Fetching current time from server");
+    while(!DateTime.isTimeValid()) {
+      if(!DateTime.begin(20000)) {
+        println("Failed to fetch current time from server");
+        delay(httpReadDelay);
+      }
     }
+    print("Fetched current time from server ");
+    println(DateTime.toString());
   }
-  print("Fetched current time from server ");
-  println(DateTime.toString());
-}
+
+  public:
+  WifiManager() {}
+  ~WifiManager() {}
+
+  void begin() {
+    setupInternetConnection();
+    setupLocalTime();
+  }
+
+};
+
+WifiManager wifiManager = WifiManager();
 
 struct Switch {
   private:
@@ -191,16 +202,14 @@ struct OtherParams {
     Json json;
     json["time"] = DateTime.getParts().toString();
     json["bootTime"] = DateTimeParts::from(DateTime.getBootTime()).toString();
-    json["lastInternetInterruption"] = DateTimeParts::from(lastInternetInterruption).toString();
-    json["version"] = version;
+    json["version"] = String(version);
     return json;
   }
 
   Json getDocumentationJson() {
     Json json;
     json["time"] = "Aktualny czas systemowy";
-    json["bootTime"] = "Czas ostatniego uruchomienia urządzenia";
-    json["lastInternetInterruption"] = "Czas ostatniej utraty łączności z internetem";
+    json["bootTime"] = "Czas uruchomienia urządzenia";
     json["version"] = "Wersja oprogramowania urządzenia";
     return json;
   }
@@ -1052,7 +1061,6 @@ struct ProductionPlansManager {
   }
 
   String getPredictionsStringOrEmpty() {
-    setupInternetConnectionIfNeeded();
     println("Fetching prediction from server");
     String payload = getPanelSetupString();
     HTTPClient http;
@@ -1508,8 +1516,6 @@ Json getDocResponse(String path, String description) {
 }
 
 void setupServer() {
-  setupInternetConnectionIfNeeded();
-
   server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
     JsonArray edpointsJson;
     edpointsJson.push(getDocResponse("status", "Returns current status, config and plans"));
@@ -1656,7 +1662,7 @@ void setup() {
   temperatureSensor.begin();
   humiditySensor.begin();
   initializeLocalStorage();
-  setupLocalTimefNeeded();
+  wifiManager.begin();
   setupServer();
   println("Finished setup");
 }
@@ -1668,7 +1674,6 @@ void loop() {
   upMoveDetector.update();
   pumpManager.invalidate();
   ventManager.invalidate();
-  setupInternetConnectionIfNeeded();
   if(productionPlansManager.shouldUpdatePlans()) {
     heaterStatus.disableAllHeaters();
     productionPlansManager.updateProductionPlansIfNeeded();
