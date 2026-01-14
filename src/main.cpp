@@ -1454,11 +1454,11 @@ struct VentManager {
       if(ventEnableTime + ventConfig.periodicVentilationTime <= DateTime.getTime()) {
         disableVent("periodic ventilation time exceeded");
       } else {
-        enableVent("periodic ventilation active", highGear);
+        enableVent("periodic ventilation", highGear);
       }
       return;
     }
-    if(!ventStatus.isEnabled() && (lastVentWorkTime == 0 || lastVentWorkTime + ventConfig.periodicVentilationDelay > DateTime.getTime())) {
+    if(!ventStatus.isEnabled() && (lastVentWorkTime == 0 || lastVentWorkTime + ventConfig.periodicVentilationDelay < DateTime.getTime())) {
       periodicVentilationActive = true;
       enableVent("periodic ventilation", highGear);
       return;
