@@ -15,7 +15,7 @@
 // 200L, 2KW od 50C do 70C w 140 minut
 // 140L, 2KW od 10C do 70C w 5h
 
-#define version 6
+#define version 7
 
 #define storageStartGuard 0xDEADBEEF
 #define storageEndGuard 0xBEEFDEAD
@@ -1393,6 +1393,7 @@ struct VentManager {
   int ventOnTime = 0;
   time_t ventEnableTime = 0;
   time_t lastVentWorkTime = 0;
+  bool periodicVentilationActive = false;
   String statusReason = "unknown";
 
   void enableVent(String reason, bool highGear) {
@@ -1414,6 +1415,7 @@ struct VentManager {
       return;
     }
     statusReason = statusReason + " | " + reason;
+    periodicVentilationActive = false;
     lastVentWorkTime = DateTime.getTime();
     if(ventEnableTime != 0) {
       ventOnTime += DateTime.getTime() - ventEnableTime;
@@ -1448,12 +1450,17 @@ struct VentManager {
       disableVent("night mode");
       return;
     }
-    if(lastVentWorkTime == 0 || lastVentWorkTime + ventConfig.periodicVentilationDelay > DateTime.getTime()) {
-      if(!ventStatus.isEnabled()) {
-        enableVent("periodic ventilation", highGear);
-      } else if(ventEnableTime + ventConfig.periodicVentilationTime <= DateTime.getTime()) {
+    if(periodicVentilationActive) {
+      if(ventEnableTime + ventConfig.periodicVentilationTime <= DateTime.getTime()) {
         disableVent("periodic ventilation time exceeded");
+      } else {
+        enableVent("periodic ventilation active", highGear);
       }
+      return;
+    }
+    if(!ventStatus.isEnabled() && (lastVentWorkTime == 0 || lastVentWorkTime + ventConfig.periodicVentilationDelay > DateTime.getTime())) {
+      periodicVentilationActive = true;
+      enableVent("periodic ventilation", highGear);
       return;
     }
 
