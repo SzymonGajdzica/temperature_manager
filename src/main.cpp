@@ -1480,12 +1480,12 @@ struct VentManager {
       return;
     }
 
-    if(ventEnableTime != 0 && ventEnableTime + ventConfig.maxWorkTime <= DateTime.getTime()) {
+    if(ventEnableTime != 0 && ventEnableTime + ventConfig.maxWorkTime < DateTime.getTime()) {
       disableVent("maxWorkTime exceeded");
       return;
     }
 
-    if(humidity > ventConfig.bottomHumidityThreshold && lastVentWorkTime + ventConfig.minDelayTime > DateTime.getTime()) {
+    if(humidity > ventConfig.bottomHumidityThreshold && lastVentWorkTime + ventConfig.minDelayTime < DateTime.getTime()) {
       enableVent("humidity above bottomHumidityThreshold and within time limits", highGear);
       return;
     }
