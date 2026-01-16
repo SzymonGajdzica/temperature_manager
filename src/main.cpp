@@ -15,7 +15,7 @@
 // 200L, 2KW od 50C do 70C w 140 minut
 // 140L, 2KW od 10C do 70C w 5h
 
-#define version 7
+#define version 8
 
 #define storageStartGuard 0xDEADBEEF
 #define storageEndGuard 0xBEEFDEAD
@@ -1323,11 +1323,14 @@ struct PumpManager {
       return;
     }
 
+    float temperature = temperatureSensor.readIdleTemperatureIfNeeded();
     if(pumpDisableTime + pumpConfig.pumpDelayTime > DateTime.getTime()) {
       return;
     }
 
-    float temperature = temperatureSensor.readIdleTemperatureIfNeeded();
+    if(temperatureSensor.isTemperatureValid(temperature) && temperature > pumpConfig.pumpOffTemperature) {
+      temperature = temperatureSensor.readWorkingTemperatureIfNeeded();
+    }
     if(temperatureSensor.isTemperatureValid(temperature) && temperature > pumpConfig.pumpOffTemperature) {
       pumpDisableTime = DateTime.getTime();
       statusReason = "temperature still above pumpOffTemperature";
@@ -1427,9 +1430,9 @@ struct VentManager {
   public:
   void resetStats() {
     disableVent("stats reset");
-      dayOfYear = DateTime.getParts().getYearDay();
-      ventOnTime = 0;
-      ventEnableTime = 0;
+    dayOfYear = DateTime.getParts().getYearDay();
+    ventOnTime = 0;
+    ventEnableTime = 0;
   }
 
   void invalidate() {
@@ -1458,7 +1461,7 @@ struct VentManager {
       }
       return;
     }
-    if(!ventStatus.isEnabled() && (lastVentWorkTime == 0 || lastVentWorkTime + ventConfig.periodicVentilationDelay < DateTime.getTime())) {
+    if(!ventStatus.isEnabled() && lastVentWorkTime + ventConfig.periodicVentilationDelay < DateTime.getTime()) {
       periodicVentilationActive = true;
       enableVent("periodic ventilation", highGear);
       return;
