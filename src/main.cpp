@@ -27,7 +27,9 @@
 
 #define loopDelay 1
 const int maxNumberOfRetries = 10;
-const int httpReadDelay = 30000;
+const int httpReadDelayMillis = 30 * 1000;
+const int wifiCheckDelay = 60 * 5;
+const int wifiConnectTimeoutMillis = 30 * 1000;
 
 #define nightHoursSize 12
 
@@ -55,38 +57,54 @@ void println(String message) {
 
 struct WifiManager {
   private:
+  time_t disconnectTime;
+  time_t lastDisconnectTime;
 
   bool isWifiConnected() {
     return WiFi.status() == WL_CONNECTED;
   }
 
-  void waitForWifiConnection() {
+  void waitForWifiConnection(int timeoutMillis) {
     print("Connecting to WiFi");
 
+    unsigned long start = millis();
+
     while (!isWifiConnected()) {
+      if (millis() - start >= timeoutMillis) {
+        println(" Failed (timeout)");
+        return;
+      }
+
       delay(100);
       print(".");
     }
-    println(" Connected!");
 
+    println(" Connected!");
     print("IP address: ");
     println(WiFi.localIP().toString());
   }
 
   void setupInternetConnection() {
+    WiFi.disconnect(true, true);
+    delay(300);
+
+    WiFi.mode(WIFI_STA);
+    delay(200);
+    WiFi.setAutoReconnect(true);
+    WiFi.persistent(false);
+
     IPAddress localIP(192, 168, hostId1, hostId2);
     IPAddress gateway(192, 168, hostId1, 1); 
     IPAddress subnet(255, 255, 0, 0); 
     IPAddress primaryDNS(8, 8, 8, 8);
     IPAddress secondaryDNS(8, 8, 4, 4); 
+
     while (!WiFi.config(localIP, gateway, subnet, primaryDNS, secondaryDNS)) {
         Serial.println("STA Failed to configure");
         delay(10000);
     }
-    WiFi.mode(WIFI_STA);
-    WiFi.setAutoReconnect(true);
+
     WiFi.begin("Dom", "123456789a");
-    waitForWifiConnection();
   }
 
   void setupLocalTime() {
@@ -95,7 +113,7 @@ struct WifiManager {
     while(!DateTime.isTimeValid()) {
       if(!DateTime.begin(20000)) {
         println("Failed to fetch current time from server");
-        delay(httpReadDelay);
+        delay(httpReadDelayMillis);
       }
     }
     print("Fetched current time from server ");
@@ -108,7 +126,35 @@ struct WifiManager {
 
   void begin() {
     setupInternetConnection();
+    waitForWifiConnection(wifiConnectTimeoutMillis);
     setupLocalTime();
+  }
+
+  time_t getLastDisconnectTime() {
+    return lastDisconnectTime;
+  }
+
+  void invalidate() {
+    bool isConnected = isWifiConnected();
+    if(isConnected) {
+      disconnectTime = 0;
+      return;
+    }
+    if(disconnectTime == 0) {
+      lastDisconnectTime = DateTime.getTime();
+      disconnectTime = DateTime.getTime();
+    } else if(DateTime.getTime() - disconnectTime > wifiCheckDelay) {
+      setupInternetConnection();
+      disconnectTime = 0;
+    }
+  }
+
+  bool ensureConnection() {
+    if(!isWifiConnected()) {
+      setupInternetConnection();
+      waitForWifiConnection(wifiConnectTimeoutMillis);
+    }
+    return isWifiConnected();
   }
 
 };
@@ -209,6 +255,7 @@ struct OtherParams {
     json["time"] = DateTime.getParts().toString();
     json["bootTime"] = DateTimeParts::from(DateTime.getBootTime()).toString();
     json["version"] = String(version);
+    json["lastWifiDisconnectTime"] = DateTimeParts::from(wifiManager.getLastDisconnectTime()).toString();
     return json;
   }
 
@@ -217,6 +264,7 @@ struct OtherParams {
     json["time"] = "Aktualny czas systemowy";
     json["bootTime"] = "Czas uruchomienia urządzenia";
     json["version"] = "Wersja oprogramowania urządzenia";
+    json["lastWifiDisconnectTime"] = "Czas ostatniego rozłączenia z siecią WiFi";
     return json;
   }
 
@@ -1067,11 +1115,12 @@ struct ProductionPlansManager {
   }
 
   String getPredictionsStringOrEmpty() {
+    wifiManager.ensureConnection();
     println("Fetching prediction from server");
     String payload = getPanelSetupString();
     HTTPClient http;
     WiFiClient client;
-    client.setTimeout(httpReadDelay);
+    client.setTimeout(httpReadDelayMillis);
     http.begin(client, "http://solar.datatask.net/api/predict/");
     http.addHeader("Content-Type", "application/json");
     int httpCode = http.POST(payload);
@@ -1684,6 +1733,7 @@ void setup() {
 }
 
 void loop() {
+  wifiManager.invalidate();
   upButtonKitchen.update();
   bottomMoveDetector.update();
   middleMoveDetector.update();
