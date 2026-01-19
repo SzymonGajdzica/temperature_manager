@@ -1511,9 +1511,11 @@ struct VentManager {
       return;
     }
     if(!ventStatus.isEnabled() && lastVentWorkTime + ventConfig.periodicVentilationDelay < DateTime.getTime()) {
-      periodicVentilationActive = true;
-      enableVent("periodic ventilation", highGear);
-      return;
+      if(currentHour + 1 < ventConfig.nightStartHour && currentHour - 1 >= ventConfig.nightEndHour) {
+        periodicVentilationActive = true;
+        enableVent("periodic ventilation", highGear);
+        return;
+      }
     }
 
     float humidity = humiditySensor.readHumidityIfNeeded();
