@@ -33,8 +33,8 @@ const int wifiConnectTimeoutMillis = 30 * 1000;
 
 #define nightHoursSize 12
 
-#define humidityPinSDA 17
-#define humidityPinSCL 19
+#define humidityPinSDA 16
+#define humidityPinSCL 17
 #define temperaturePin 18
 #define moveDetectorBottomPin 21
 #define moveDetectorMiddlePin 22
@@ -1510,7 +1510,7 @@ struct VentManager {
       }
       return;
     }
-    if(!ventStatus.isEnabled() && lastVentWorkTime + ventConfig.periodicVentilationDelay < DateTime.getTime()) {
+    if(!ventStatus.isEnabled() && lastVentWorkTime + ventConfig.periodicVentilationDelay < DateTime.getTime() && ventConfig.periodicVentilationTime > 0) {
       if(currentHour + 1 < ventConfig.nightStartHour && currentHour - 1 >= ventConfig.nightEndHour) {
         periodicVentilationActive = true;
         enableVent("periodic ventilation", highGear);
