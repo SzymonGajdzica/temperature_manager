@@ -583,6 +583,7 @@ struct HumiditySensor {
   float lastGoodReadHumidity;
   time_t lastReadHumidityTime;
   time_t lastGoodReadHumidityTime;
+  time_t lastBadReadHumidityTime;
   bool serialInitialized = false;
 
   float readHumidity() {
@@ -597,12 +598,14 @@ struct HumiditySensor {
     if (isHumidityValid(humidity)) {
       lastGoodReadHumidity = humidity;
       lastGoodReadHumidityTime = mTime;
+    } else {
+      lastBadReadHumidityTime = mTime;
     }
     return humidity;
   }
 
   public:
-  HumiditySensor(uint8_t pinSDA, uint8_t pinSCL) : pinSDA(pinSDA), pinSCL(pinSCL), sht(), lastReadHumidity(-1.0f), lastGoodReadHumidity(-1.0f), lastReadHumidityTime(0), lastGoodReadHumidityTime(0) {}
+  HumiditySensor(uint8_t pinSDA, uint8_t pinSCL) : pinSDA(pinSDA), pinSCL(pinSCL), sht(), lastReadHumidity(-1.0f), lastGoodReadHumidity(-1.0f), lastReadHumidityTime(0), lastGoodReadHumidityTime(0), lastBadReadHumidityTime(0) {}
   ~HumiditySensor() {}
 
   void begin() {
@@ -645,6 +648,7 @@ struct HumiditySensor {
     json["lastHumidityReadTime"] = DateTimeParts::from(getLastHumidityReadTime()).toString();
     json["lastGoodHumidity"] = getLastGoodHumidity();
     json["lastGoodHumidityReadTime"] = DateTimeParts::from(getLastGoodHumidityReadTime()).toString();
+    json["lastBadHumidityReadTime"] = DateTimeParts::from(lastBadReadHumidityTime).toString();
     json["serialInitialized"] = serialInitialized;
     return json;
   }
@@ -655,6 +659,7 @@ struct HumiditySensor {
     json["lastHumidityReadTime"] = "Czas ostatniego odczytu wilgotności powietrza";
     json["lastGoodHumidity"] = "Ostatnia poprawna odczytana wilgotność powietrza w procentach";
     json["lastGoodHumidityReadTime"] = "Czas ostatniego poprawnego odczytu wilgotności powietrza";
+    json["lastBadHumidityReadTime"] = "Czas ostatniego niepoprawnego odczytu wilgotności powietrza";
     json["serialInitialized"] = "Czy komunikacja z czujnikiem wilgotności została poprawnie zainicjalizowana";
     return json;
   }
@@ -671,6 +676,7 @@ struct TemperatureSensor {
   float lastGoodReadTemperature;
   time_t lastReadTemperatureTime;
   time_t lastGoodReadTemperatureTime;
+  time_t lastBadReadTemperatureTime;
 
   float readTemperature() {
     sensors.requestTemperatures(); 
@@ -686,12 +692,14 @@ struct TemperatureSensor {
     if (isTemperatureValid(temperature)) {
       lastGoodReadTemperature = temperature;
       lastGoodReadTemperatureTime = mTime;
+    } else {
+      lastBadReadTemperatureTime = mTime;
     }
     return temperature;
   }
 
   public:
-  TemperatureSensor(uint8_t pin) : oneWire(pin), sensors(&oneWire), lastReadTemperature(DEVICE_DISCONNECTED_C), lastGoodReadTemperature(DEVICE_DISCONNECTED_C), lastReadTemperatureTime(0), lastGoodReadTemperatureTime(0) {}
+  TemperatureSensor(uint8_t pin) : oneWire(pin), sensors(&oneWire), lastReadTemperature(DEVICE_DISCONNECTED_C), lastGoodReadTemperature(DEVICE_DISCONNECTED_C), lastReadTemperatureTime(0), lastGoodReadTemperatureTime(0), lastBadReadTemperatureTime(0) {}
   ~TemperatureSensor() {}
 
   void begin() {
@@ -738,6 +746,7 @@ struct TemperatureSensor {
     json["lastTemperatureReadTime"] = DateTimeParts::from(getLastTemperatureReadTime()).toString();
     json["lastGoodTemperature"] = getLastGoodTemperature();
     json["lastGoodTemperatureReadTime"] = DateTimeParts::from(getLastGoodTemperatureReadTime()).toString();
+    json["lastBadTemperatureReadTime"] = DateTimeParts::from(lastBadReadTemperatureTime).toString();
     return json;
   }
 
@@ -747,6 +756,7 @@ struct TemperatureSensor {
     json["lastTemperatureReadTime"] = "Czas ostatniego odczytu temperatury";
     json["lastGoodTemperature"] = "Ostatnia poprawna odczytana temperatura w stopniach Celsjusza";
     json["lastGoodTemperatureReadTime"] = "Czas ostatniego poprawnego odczytu temperatury";
+    json["lastBadTemperatureReadTime"] = "Czas ostatniego niepoprawnego odczytu temperatury";
     return json;
   }
 
