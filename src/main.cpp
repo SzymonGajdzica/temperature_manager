@@ -15,7 +15,7 @@
 // 200L, 2KW od 50C do 70C w 140 minut
 // 140L, 2KW od 10C do 70C w 5h
 
-#define version 8
+#define version 9
 
 #define storageStartGuard 0xDEADBEEF
 #define storageEndGuard 0xBEEFDEAD
@@ -1467,7 +1467,6 @@ struct VentManager {
       ventEnableTime = DateTime.getTime();
       ventStatus.setVentMode(true, highGear);
     } else {
-      statusReason = reason;
       ventStatus.setVentMode(true, highGear);
     }
   }
@@ -1479,10 +1478,7 @@ struct VentManager {
     statusReason = statusReason + " | " + reason;
     periodicVentilationActive = false;
     ventDisableTime = DateTime.getTime();
-    if(ventEnableTime != 0) {
-      ventOnTime += DateTime.getTime() - ventEnableTime;
-    }
-    ventEnableTime = 0;
+    ventOnTime += DateTime.getTime() - ventEnableTime;
     ventStatus.setVentMode(false, false);
   }
 
