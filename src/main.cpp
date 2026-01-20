@@ -645,9 +645,9 @@ struct HumiditySensor {
     Json getJson() {
     Json json;
     json["lastHumidity"] = getLastHumidity();
-    json["lastHumidityReadTime"] = DateTimeParts::from(getLastHumidityReadTime()).toString();
+    json["lastHumidityReadTime"] = DateTimeParts::from(lastReadHumidityTime).toString();
     json["lastGoodHumidity"] = getLastGoodHumidity();
-    json["lastGoodHumidityReadTime"] = DateTimeParts::from(getLastGoodHumidityReadTime()).toString();
+    json["lastGoodHumidityReadTime"] = DateTimeParts::from(lastGoodReadHumidityTime).toString();
     json["lastBadHumidityReadTime"] = DateTimeParts::from(lastBadReadHumidityTime).toString();
     json["serialInitialized"] = serialInitialized;
     return json;
@@ -743,9 +743,9 @@ struct TemperatureSensor {
   Json getJson() {
     Json json;
     json["lastTemperature"] = getLastTemperature();
-    json["lastTemperatureReadTime"] = DateTimeParts::from(getLastTemperatureReadTime()).toString();
+    json["lastTemperatureReadTime"] = DateTimeParts::from(lastReadTemperatureTime).toString();
     json["lastGoodTemperature"] = getLastGoodTemperature();
-    json["lastGoodTemperatureReadTime"] = DateTimeParts::from(getLastGoodTemperatureReadTime()).toString();
+    json["lastGoodTemperatureReadTime"] = DateTimeParts::from(lastGoodReadTemperatureTime).toString();
     json["lastBadTemperatureReadTime"] = DateTimeParts::from(lastBadReadTemperatureTime).toString();
     return json;
   }
@@ -1454,7 +1454,7 @@ struct VentManager {
   int dayOfYear = -1;
   int ventOnTime = 0;
   time_t ventEnableTime = 0;
-  time_t lastVentWorkTime = 0;
+  time_t ventDisableTime = 0;
   bool periodicVentilationActive = false;
   String statusReason = "unknown";
 
@@ -1478,7 +1478,7 @@ struct VentManager {
     }
     statusReason = statusReason + " | " + reason;
     periodicVentilationActive = false;
-    lastVentWorkTime = DateTime.getTime();
+    ventDisableTime = DateTime.getTime();
     if(ventEnableTime != 0) {
       ventOnTime += DateTime.getTime() - ventEnableTime;
     }
@@ -1520,7 +1520,7 @@ struct VentManager {
       }
       return;
     }
-    if(!ventStatus.isEnabled() && lastVentWorkTime + ventConfig.periodicVentilationDelay < DateTime.getTime() && ventConfig.periodicVentilationTime > 0) {
+    if(!ventStatus.isEnabled() && ventDisableTime + ventConfig.periodicVentilationDelay < DateTime.getTime() && ventConfig.periodicVentilationTime > 0) {
       if(currentHour + 1 < ventConfig.nightStartHour && currentHour - 1 >= ventConfig.nightEndHour) {
         periodicVentilationActive = true;
         enableVent("periodic ventilation", highGear);
@@ -1549,7 +1549,7 @@ struct VentManager {
       return;
     }
 
-    if(humidity > ventConfig.bottomHumidityThreshold && lastVentWorkTime + ventConfig.minDelayTime < DateTime.getTime()) {
+    if(humidity > ventConfig.bottomHumidityThreshold && ventDisableTime + ventConfig.minDelayTime < DateTime.getTime()) {
       enableVent("humidity above bottomHumidityThreshold and within time limits", highGear);
       return;
     }
@@ -1560,7 +1560,7 @@ struct VentManager {
     Json json;
     json["ventOnTime"] = int(ventOnTime);
     json["lastVentEnableTime"] = DateTimeParts::from(ventEnableTime).toString();
-    json["lastVentWorkTime"] = DateTimeParts::from(lastVentWorkTime).toString();
+    json["lastVentDisableTime"] = DateTimeParts::from(ventDisableTime).toString();
     json["statusReason"] = statusReason;
     return json;
   }
@@ -1569,7 +1569,7 @@ struct VentManager {
     Json json;
     json["ventOnTime"] = "Czas pracy wentylacji w sekundach aktualnego dnia";
     json["lastVentEnableTime"] = "Czas ostatniego włączenia wentylacji";
-    json["lastVentWorkTime"] = "Czas ostatniej pracy wentylacji (zarejestrowana w momencie wyłączenia)";
+    json["lastVentDisableTime"] = "Czas ostatniego wyłączenia wentylacji";
     json["statusReason"] = "Powód aktualnego stanu wentylacji (np. wysoka wilgotność, tryb nocny, itp.)";
     return json;
   }
