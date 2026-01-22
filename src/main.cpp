@@ -55,6 +55,20 @@ void println(String message) {
   Serial.println(message);
 }
 
+String formatSeconds(int seconds) {
+    int h = seconds / 3600;
+    int m = (seconds % 3600) / 60;
+    int s = seconds % 60;
+
+    String result = "PT";
+
+    if (h > 0) result += String(h) + "H";
+    if (m > 0) result += String(m) + "M";
+    if (s > 0 || seconds == 0) result += String(s) + "S";
+
+    return result;
+}
+
 struct WifiManager {
   private:
   time_t disconnectTime;
@@ -1433,7 +1447,7 @@ struct PumpManager {
 
   Json getJson() {
     Json json;
-    json["pumpUptime"] = int(pumpUptime);
+    json["pumpUptime"] = formatSeconds(pumpUptime);
     json["lastPumpEnableTime"] = DateTimeParts::from(pumpEnableTime).toString();
     json["bottomBathroomTriggers"] = triggerCounters[0];
     json["middleBathroomTriggers"] = triggerCounters[1];
@@ -1578,7 +1592,7 @@ struct VentManager {
 
   Json getJson() {
     Json json;
-    json["ventOnTime"] = int(ventOnTime);
+    json["ventOnTime"] = formatSeconds(ventOnTime);
     json["lastVentEnableTime"] = DateTimeParts::from(ventEnableTime).toString();
     json["lastVentDisableTime"] = DateTimeParts::from(ventDisableTime).toString();
     json["statusReason"] = statusReason;
