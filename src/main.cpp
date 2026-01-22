@@ -15,7 +15,7 @@
 // 200L, 2KW od 50C do 70C w 140 minut
 // 140L, 2KW od 10C do 70C w 5h
 
-#define version 9
+#define version 10
 
 #define storageStartGuard 0xDEADBEEF
 #define storageEndGuard 0xBEEFDEAD
@@ -287,7 +287,7 @@ struct PumpConfig {
   bool pumpAutoMode;
   bool pumpEnabled;
 
-  PumpConfig() : workingTemperatureReadDelay(2), idleTemperatureReadDelay(120), pumpOffTemperature(30), pumpOnTimeBottomBathroom(0), pumpOnTimeMiddleBathroom(120), pumpOnTimeUpKitchen(0), pumpOnTimeUpBathroom(0), pumpDelayTime(60 * 30), pumpLowTemperatureGuard(5), pumpOnTimeGuard(120), pumpAutoMode(true), pumpEnabled(false) {}
+  PumpConfig() : workingTemperatureReadDelay(2), idleTemperatureReadDelay(120), pumpOffTemperature(40), pumpOnTimeBottomBathroom(0), pumpOnTimeMiddleBathroom(60), pumpOnTimeUpKitchen(0), pumpOnTimeUpBathroom(60), pumpDelayTime(60 * 30), pumpLowTemperatureGuard(5), pumpOnTimeGuard(120), pumpAutoMode(true), pumpEnabled(false) {}
   ~PumpConfig() {}
 
   int getPumpOnTime(int index) {
@@ -401,8 +401,9 @@ struct VentConfig {
   int periodicVentilationDelay;
   int periodicVentilationTime;
   int humidityReadDelay;
-  float bottomHumidityThreshold;
   float highHumidityThreshold;
+  float veryHighHumidityThreshold;
+  float humidityHysteresis;
   int maxWorkTime;
   int minDelayTime;
   int nightStartHour;
@@ -411,7 +412,7 @@ struct VentConfig {
   bool ventAutoMode;
   bool ventEnabled;
 
-  VentConfig() : periodicVentilationDelay(3 * 60 * 60), periodicVentilationTime(5 * 60), humidityReadDelay(30), bottomHumidityThreshold(55), highHumidityThreshold(70), maxWorkTime(30 * 60), minDelayTime(60 * 60), nightStartHour(23), nightEndHour(6), useHighGear(false), ventAutoMode(true), ventEnabled(false) {}
+  VentConfig() : periodicVentilationDelay(3 * 60 * 60), periodicVentilationTime(0), humidityReadDelay(30), highHumidityThreshold(55), veryHighHumidityThreshold(65), humidityHysteresis(5), maxWorkTime(30 * 60), minDelayTime(60 * 60), nightStartHour(23), nightEndHour(6), useHighGear(false), ventAutoMode(true), ventEnabled(false) {}
   ~VentConfig() {}
 
   Json getJson() {
@@ -419,8 +420,9 @@ struct VentConfig {
     json["periodicVentilationDelay"] = periodicVentilationDelay;
     json["periodicVentilationTime"] = periodicVentilationTime;
     json["humidityReadDelay"] = humidityReadDelay;
-    json["bottomHumidityThreshold"] = bottomHumidityThreshold;
     json["highHumidityThreshold"] = highHumidityThreshold;
+    json["veryHighHumidityThreshold"] = veryHighHumidityThreshold;
+    json["humidityHysteresis"] = humidityHysteresis;
     json["maxWorkTime"] = maxWorkTime;
     json["minDelayTime"] = minDelayTime;
     json["nightStartHour"] = nightStartHour;
@@ -436,8 +438,9 @@ struct VentConfig {
     json["periodicVentilationDelay"] = "Częstotliwość okresowej wentylacji w sekundach";
     json["periodicVentilationTime"] = "Czas trwania okresowej wentylacji w sekundach";
     json["humidityReadDelay"] = "Częstotliwość odczytu wilgotności w sekundach";
-    json["bottomHumidityThreshold"] = "Próg wilgotności poniżej którego wyłączamy wentylację";
-    json["highHumidityThreshold"] = "Próg wilgotności powyżej którego włączamy wentylacje bez wzgledu na ograniczenia czasowe (maxWorkTime i minDelayTime)";
+    json["highHumidityThreshold"] = "Próg wilgotności powyżej którego włączamy wentylacje";
+    json["veryHighHumidityThreshold"] = "Próg wilgotności powyżej którego włączamy wentylacje bez wzgledu na ograniczenia czasowe (maxWorkTime i minDelayTime)";
+    json["humidityHysteresis"] = "Histereza dla wilgotności (różnica pomiędzy progiem włączania i wyłączania wentylacji)";
     json["maxWorkTime"] = "Maksymalny czas pracy wentylacji w sekundach (jeśli wentylacja jest włączona, to po tym czasie zostanie wyłączona, jeśli jest ponizej highHumidityThreshold)";
     json["minDelayTime"] = "Minimalny czas przerwy pomiędzy kolejnymi uruchomieniami wentylacji w sekundach (jeśli wentylacja została wyłączona, to nie może być ponownie włączona przed upływem tego czasu, chyba że wilgotność przekroczy highHumidityThreshold)";
     json["nightStartHour"] = "Godzina rozpoczęcia trybu nocnego (w trybie nocnym wentylacja jest wyłączona niezależnie od wilgotności)";
@@ -462,12 +465,16 @@ struct VentConfig {
       humidityReadDelay = request->getParam("humidityReadDelay")->value().toInt();
       hasChanges = true;
     }
-    if (request->hasParam("bottomHumidityThreshold")) {
-      bottomHumidityThreshold = request->getParam("bottomHumidityThreshold")->value().toFloat();
-      hasChanges = true;
-    }
     if (request->hasParam("highHumidityThreshold")) {
       highHumidityThreshold = request->getParam("highHumidityThreshold")->value().toFloat();
+      hasChanges = true;
+    }
+    if (request->hasParam("veryHighHumidityThreshold")) {
+      veryHighHumidityThreshold = request->getParam("veryHighHumidityThreshold")->value().toFloat();
+      hasChanges = true;
+    }
+    if (request->hasParam("humidityHysteresis")) {
+      humidityHysteresis = request->getParam("humidityHysteresis")->value().toFloat();
       hasChanges = true;
     }
     if(request->hasParam("maxWorkTime")) {
@@ -771,8 +778,11 @@ struct VentStatus {
   VentStatus() {}
   ~VentStatus() {}
 
-  void setVentMode(bool ventEnabled, bool highGear) {
+  void setVentMode(bool ventEnabled) {
     ventSwitch.setState(ventEnabled);
+  }
+
+  void setGear(bool highGear) {
     ventGearSwitch.setState(highGear);
   }
 
@@ -1456,19 +1466,16 @@ struct VentManager {
   time_t ventEnableTime = 0;
   time_t ventDisableTime = 0;
   bool periodicVentilationActive = false;
+  bool veryHighHumidityActive = false;
   String statusReason = "unknown";
 
-  void enableVent(String reason, bool highGear) {
-    if(ventStatus.isEnabled() && ventStatus.isHighGear() == highGear) {
+  void enableVent(String reason) {
+    if(ventStatus.isEnabled()) {
       return;
     }
-    if(!ventStatus.isEnabled()) {
-      statusReason = reason;
-      ventEnableTime = DateTime.getTime();
-      ventStatus.setVentMode(true, highGear);
-    } else {
-      ventStatus.setVentMode(true, highGear);
-    }
+    statusReason = reason;
+    ventEnableTime = DateTime.getTime();
+    ventStatus.setVentMode(true);
   }
 
   void disableVent(String reason) {
@@ -1477,9 +1484,11 @@ struct VentManager {
     }
     statusReason = statusReason + " | " + reason;
     periodicVentilationActive = false;
+    veryHighHumidityActive = false;
     ventDisableTime = DateTime.getTime();
     ventOnTime += DateTime.getTime() - ventEnableTime;
-    ventStatus.setVentMode(false, false);
+    ventStatus.setVentMode(false);
+    ventStatus.setGear(false);
   }
 
   public:
@@ -1494,10 +1503,12 @@ struct VentManager {
     if(dayOfYear != DateTime.getParts().getYearDay()) {
       resetStats();
     }
-    bool highGear = ventConfig.useHighGear;
+    if(ventStatus.isEnabled()) {
+      ventStatus.setGear(ventConfig.useHighGear);
+    }
     if(!ventConfig.ventAutoMode) {
       if(ventConfig.ventEnabled) {
-        enableVent("manual mode", highGear);
+        enableVent("manual mode");
       } else {
         disableVent("manual mode");
       }
@@ -1512,14 +1523,15 @@ struct VentManager {
       if(ventEnableTime + ventConfig.periodicVentilationTime <= DateTime.getTime()) {
         disableVent("periodic ventilation time exceeded");
       } else {
-        enableVent("periodic ventilation", highGear);
+        enableVent("periodic ventilation");
       }
       return;
     }
     if(!ventStatus.isEnabled() && ventDisableTime + ventConfig.periodicVentilationDelay < DateTime.getTime() && ventConfig.periodicVentilationTime > 0) {
-      if(currentHour + 1 < ventConfig.nightStartHour && currentHour - 1 >= ventConfig.nightEndHour) {
+      int mHours = ventConfig.periodicVentilationDelay / 3600;
+      if(currentHour + mHours < ventConfig.nightStartHour && currentHour - mHours >= ventConfig.nightEndHour) {
         periodicVentilationActive = true;
-        enableVent("periodic ventilation", highGear);
+        enableVent("periodic ventilation");
         return;
       }
     }
@@ -1530,13 +1542,25 @@ struct VentManager {
       return;
     }
 
-    if(humidity <= ventConfig.bottomHumidityThreshold) {
-      disableVent("humidity below bottomHumidityThreshold");
+    if(veryHighHumidityActive) {
+      if(humidity < ventConfig.veryHighHumidityThreshold - ventConfig.humidityHysteresis) {
+        disableVent("humidity below veryHighHumidityThreshold - humidityHysteresis");
+      }
       return;
     }
 
-    if(humidity >= ventConfig.highHumidityThreshold) {
-      enableVent("humidity over highHumidityThreshold", highGear);
+    if(humidity > ventConfig.veryHighHumidityThreshold + ventConfig.humidityHysteresis) {
+      veryHighHumidityActive = true;
+      if(ventStatus.isEnabled()) {
+        statusReason = "humidity over veryHighHumidityThreshold";
+      } else {
+        enableVent("humidity over veryHighHumidityThreshold + humidityHysteresis");
+      }
+      return;
+    }
+
+    if(humidity < ventConfig.highHumidityThreshold - ventConfig.humidityHysteresis) {
+      disableVent("humidity below highHumidityThreshold - humidityHysteresis");
       return;
     }
 
@@ -1545,8 +1569,8 @@ struct VentManager {
       return;
     }
 
-    if(humidity > ventConfig.bottomHumidityThreshold && ventDisableTime + ventConfig.minDelayTime < DateTime.getTime()) {
-      enableVent("humidity above bottomHumidityThreshold and within time limits", highGear);
+    if(humidity > ventConfig.highHumidityThreshold + ventConfig.humidityHysteresis && ventDisableTime + ventConfig.minDelayTime < DateTime.getTime()) {
+      enableVent("humidity above highHumidityThreshold + humidityHysteresis and within time limits");
       return;
     }
 
@@ -1736,8 +1760,8 @@ void setup() {
   initializeLocalStorage();
   wifiManager.begin();
   setupServer();
-  println("Finished setup waiting 5 secs to start loop");
-  delay(5000);
+  println("Finished setup waiting 120 secs to start loop");
+  delay(120000);
 }
 
 void loop() {
