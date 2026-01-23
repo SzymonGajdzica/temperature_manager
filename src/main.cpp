@@ -288,6 +288,8 @@ OtherParams otherParams = OtherParams();
 
 struct PumpConfig {
   public:
+  int nightStartHour;
+  int nightEndHour;
   int workingTemperatureReadDelay;
   int idleTemperatureReadDelay;
   float pumpOffTemperature;
@@ -301,7 +303,7 @@ struct PumpConfig {
   bool pumpAutoMode;
   bool pumpEnabled;
 
-  PumpConfig() : workingTemperatureReadDelay(2), idleTemperatureReadDelay(120), pumpOffTemperature(40), pumpOnTimeBottomBathroom(0), pumpOnTimeMiddleBathroom(60), pumpOnTimeUpKitchen(0), pumpOnTimeUpBathroom(60), pumpDelayTime(60 * 30), pumpLowTemperatureGuard(5), pumpOnTimeGuard(120), pumpAutoMode(true), pumpEnabled(false) {}
+  PumpConfig() : nightStartHour(23), nightEndHour(6) ,workingTemperatureReadDelay(2), idleTemperatureReadDelay(120), pumpOffTemperature(40), pumpOnTimeBottomBathroom(0), pumpOnTimeMiddleBathroom(60), pumpOnTimeUpKitchen(0), pumpOnTimeUpBathroom(60), pumpDelayTime(60 * 30), pumpLowTemperatureGuard(5), pumpOnTimeGuard(240), pumpAutoMode(true), pumpEnabled(false) {}
   ~PumpConfig() {}
 
   int getPumpOnTime(int index) {
@@ -321,6 +323,8 @@ struct PumpConfig {
 
   Json getJson() {
     Json json;
+    json["nightStartHour"] = nightStartHour;
+    json["nightEndHour"] = nightEndHour;
     json["workingTemperatureReadDelay"] = workingTemperatureReadDelay;
     json["idleTemperatureReadDelay"] = idleTemperatureReadDelay;
     json["pumpOffTemperature"] = pumpOffTemperature;
@@ -338,6 +342,8 @@ struct PumpConfig {
 
   Json getDocumentationJson() {
     Json json;
+    json["nightStartHour"] = "Godzina rozpoczęcia trybu nocnego (w trybie nocnym pompa jest wyłączona niezależnie od innych waronkow)";
+    json["nightEndHour"] = "Godzina zakończenia trybu nocnego (w trybie nocnym pompa jest wyłączona niezależnie od innych warunkow)";
     json["workingTemperatureReadDelay"] = "Opóźnienie odczytu temperatury gdy pompa pracuje w sekundach";
     json["idleTemperatureReadDelay"] = "Opóźnienie odczytu temperatury gdy pompa nie pracuje w sekundach";
     json["pumpOffTemperature"] = "Temperatura przy której pompa się wyłącza (optymalizacja pracy pompy, nie pompujemy niepotrzebnie jeśli woda jest już ciepła)";
@@ -355,6 +361,14 @@ struct PumpConfig {
 
   bool updateParams(AsyncWebServerRequest* request) {
     bool hasChanges = false;
+    if (request->hasParam("nightStartHour")) {
+      nightStartHour = request->getParam("nightStartHour")->value().toInt();
+      hasChanges = true;
+    }
+    if (request->hasParam("nightEndHour")) {
+      nightEndHour = request->getParam("nightEndHour")->value().toInt();
+      hasChanges = true;
+    }
     if (request->hasParam("workingTemperatureReadDelay")) {
       workingTemperatureReadDelay = request->getParam("workingTemperatureReadDelay")->value().toInt();
       hasChanges = true;
@@ -1406,8 +1420,18 @@ struct PumpManager {
       return;
     }
 
-    float temperature = temperatureSensor.readIdleTemperatureIfNeeded();
     if(pumpDisableTime + pumpConfig.pumpDelayTime > DateTime.getTime()) {
+      return;
+    }
+
+    float temperature = temperatureSensor.readIdleTemperatureIfNeeded();
+    if(temperatureSensor.isTemperatureValid(temperature) && temperature < pumpConfig.pumpLowTemperatureGuard) {
+      enablePump(pumpConfig.pumpOnTimeGuard, "temperature below pumpLowTemperatureGuard");
+      return;
+    }
+
+    int currentHour = DateTime.getParts().getHours();
+    if(currentHour >= pumpConfig.nightStartHour || currentHour < pumpConfig.nightEndHour) {
       return;
     }
 
@@ -1438,10 +1462,6 @@ struct PumpManager {
           return;
         }
       }
-    }
-    if(temperatureSensor.isTemperatureValid(temperature) && temperature < pumpConfig.pumpLowTemperatureGuard) {
-      enablePump(pumpConfig.pumpOnTimeGuard, "temperature below pumpLowTemperatureGuard");
-      return;
     }
   }
 
