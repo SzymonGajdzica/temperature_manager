@@ -15,7 +15,7 @@
 // 200L, 2KW od 50C do 70C w 140 minut
 // 140L, 2KW od 10C do 70C w 5h
 
-#define version 10
+#define version 12
 
 #define storageStartGuard 0xDEADBEEF
 #define storageEndGuard 0xBEEFDEAD
@@ -256,8 +256,67 @@ Switch heater200Switch1 = Switch(heater200Pin1, "Grzałka pierwsza 200L");
 Switch heater200Switch2 = Switch(heater200Pin2, "Grzałka druga 200L");
 Switch heater140Switch = Switch(heater140Pin, "Grzałka 140L");
 
-Bounce2::Button upButtonKitchen = Bounce2::Button();
+
 AsyncWebServer server(80);
+
+struct Button {
+  private:
+  Bounce2::Button mButton;
+  int pin;
+  String name;
+  bool currentState;
+  time_t lastPressTime;
+
+  public:
+  Button(int pin, String name): mButton(Bounce2::Button()), pin(pin), name(name), currentState(false), lastPressTime(0) {}
+  ~Button() {}
+
+  void begin() {
+    mButton.attach(pin, INPUT);
+    mButton.interval(5); 
+    mButton.setPressedState(LOW); 
+  }
+
+  void update() {
+    mButton.update();
+    bool oldState = currentState;
+    currentState = mButton.pressed();
+    if(oldState != currentState && currentState) {
+      lastPressTime = DateTime.getTime();
+    }
+  }
+
+  bool getCurrentState() {
+    return currentState;
+  }
+
+  String getName() {
+    return name;
+  }
+
+  time_t getLastPressTime() {
+    return lastPressTime;
+  }
+
+  Json getJson() {
+    Json json;
+    json["name"] = name;
+    json["currentState"] = currentState;
+    json["lastPressTime"] = DateTimeParts::from(lastPressTime).toString();
+    return json;
+  }
+
+  Json getDocumentationJson() {
+    Json json;
+    json["name"] = "Nazwa przycisku";
+    json["currentState"] = "Aktualny stan przycisku (true - przycisk wciśnięty)";
+    json["lastPressTime"] = "Czas ostatniego wciśnięcia przycisku";
+    return json;
+  }
+
+};
+
+Button upButtonKitchen = Button(upButtonPin, "Przuycisk kuchnia gora");
 
 struct OtherParams {
   public:
@@ -1444,7 +1503,7 @@ struct PumpManager {
       return;
     }
 
-    if(upButtonKitchen.pressed()) {
+    if(upButtonKitchen.getCurrentState()) {
       int time = pumpConfig.getPumpOnTime(3);
       if(time > 0) {
         triggerCounters[3]++;
@@ -1598,7 +1657,7 @@ struct VentManager {
       return;
     }
 
-    if(ventEnableTime != 0 && ventEnableTime + ventConfig.maxWorkTime < DateTime.getTime()) {
+    if(ventStatus.isEnabled() && ventEnableTime + ventConfig.maxWorkTime < DateTime.getTime()) {
       disableVent("maxWorkTime exceeded");
       return;
     }
@@ -1679,6 +1738,7 @@ void setupServer() {
     resultJson["upMoveDetector"] = upMoveDetector.getJson();
     resultJson["middleMoveDetector"] = middleMoveDetector.getJson();
     resultJson["bottomMoveDetector"] = bottomMoveDetector.getJson();
+    resultJson["upButtonKitchen"] = upButtonKitchen.getJson();
     resultJson["productionPlans"] = productionPlansManager.getJson();
 
     request->send(200, "application/json", resultJson.toString());
@@ -1700,6 +1760,7 @@ void setupServer() {
     resultJson["upMoveDetector"] = upMoveDetector.getDocumentationJson();
     resultJson["middleMoveDetector"] = middleMoveDetector.getDocumentationJson();
     resultJson["bottomMoveDetector"] = bottomMoveDetector.getDocumentationJson();
+    resultJson["upButtonKitchen"] = upButtonKitchen.getDocumentationJson();
     resultJson["productionPlans"] = productionPlansManager.getDocumentationJson();
 
     request->send(200, "application/json", resultJson.toString());
@@ -1782,9 +1843,7 @@ void setup() {
   bottomMoveDetector.begin();
   middleMoveDetector.begin();
   upMoveDetector.begin();
-  upButtonKitchen.attach(moveDetectorUpPin, INPUT);
-  upButtonKitchen.interval(5); 
-  upButtonKitchen.setPressedState(LOW); 
+  upButtonKitchen.begin();
   Serial.begin(9600);
   while (!Serial)
     delay(100);
