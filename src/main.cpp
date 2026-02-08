@@ -15,7 +15,7 @@
 // 200L, 2KW od 50C do 70C w 140 minut
 // 140L, 2KW od 10C do 70C w 5h
 
-#define version 12
+#define version 13
 
 #define storageStartGuard 0xDEADBEEF
 #define storageEndGuard 0xBEEFDEAD
@@ -1438,6 +1438,7 @@ struct PumpManager {
     for (int i = 0; i < numberOfMoveDetectors; i++) {
       triggerCounters[i] = 0;
     }
+    triggerCounters[3] = 0;
     pumpUptime = 0;
     pumpEnableTime = 0;
     pumpDisableTime = 0;
