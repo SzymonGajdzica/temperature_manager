@@ -1554,6 +1554,7 @@ struct VentManager {
   bool periodicVentilationActive = false;
   bool veryHighHumidityActive = false;
   String statusReason = "unknown";
+  int numberOfTriggers = 0;
 
   void enableVent(String reason) {
     if(ventStatus.isEnabled()) {
@@ -1562,6 +1563,7 @@ struct VentManager {
     statusReason = reason;
     ventEnableTime = DateTime.getTime();
     ventStatus.setVentMode(true);
+    numberOfTriggers++;
   }
 
   void disableVent(String reason) {
@@ -1583,6 +1585,7 @@ struct VentManager {
     dayOfYear = DateTime.getParts().getYearDay();
     ventOnTime = 0;
     ventEnableTime = 0;
+    numberOfTriggers = 0;
   }
 
   void invalidate() {
@@ -1664,6 +1667,7 @@ struct VentManager {
 
   Json getJson() {
     Json json;
+    json["numberOfTriggers"] = numberOfTriggers;
     json["ventOnTime"] = formatSeconds(ventOnTime);
     json["lastVentEnableTime"] = DateTimeParts::from(ventEnableTime).toString();
     json["lastVentDisableTime"] = DateTimeParts::from(ventDisableTime).toString();
@@ -1673,6 +1677,7 @@ struct VentManager {
 
   Json getDocumentationJson() {
     Json json;
+    json["numberOfTriggers"] = "Liczba uruchomień wentylacji aktualnego dnia";
     json["ventOnTime"] = "Czas pracy wentylacji w sekundach aktualnego dnia";
     json["lastVentEnableTime"] = "Czas ostatniego włączenia wentylacji";
     json["lastVentDisableTime"] = "Czas ostatniego wyłączenia wentylacji";
