@@ -15,7 +15,7 @@
 // 200L, 2KW od 50C do 70C w 140 minut
 // 140L, 2KW od 10C do 70C w 5h
 
-#define version 13
+#define version 14
 
 #define storageStartGuard 0xDEADBEEF
 #define storageEndGuard 0xBEEFDEAD
@@ -362,7 +362,7 @@ struct PumpConfig {
   bool pumpAutoMode;
   bool pumpEnabled;
 
-  PumpConfig() : nightStartHour(23), nightEndHour(6) ,workingTemperatureReadDelay(2), idleTemperatureReadDelay(120), pumpOffTemperature(40), pumpOnTimeBottomBathroom(0), pumpOnTimeMiddleBathroom(60), pumpOnTimeUpKitchen(0), pumpOnTimeUpBathroom(60), pumpDelayTime(60 * 30), pumpLowTemperatureGuard(5), pumpOnTimeGuard(240), pumpAutoMode(true), pumpEnabled(false) {}
+  PumpConfig() : nightStartHour(23), nightEndHour(6) ,workingTemperatureReadDelay(2), idleTemperatureReadDelay(120), pumpOffTemperature(40), pumpOnTimeBottomBathroom(0), pumpOnTimeMiddleBathroom(60), pumpOnTimeUpKitchen(30), pumpOnTimeUpBathroom(60), pumpDelayTime(20 * 60), pumpLowTemperatureGuard(5), pumpOnTimeGuard(240), pumpAutoMode(true), pumpEnabled(false) {}
   ~PumpConfig() {}
 
   int getPumpOnTime(int index) {
@@ -491,6 +491,7 @@ struct VentConfig {
   float highHumidityThreshold;
   float veryHighHumidityThreshold;
   float humidityHysteresis;
+  int minWorkTime;
   int maxWorkTime;
   int minDelayTime;
   int nightStartHour;
@@ -499,7 +500,7 @@ struct VentConfig {
   bool ventAutoMode;
   bool ventEnabled;
 
-  VentConfig() : periodicVentilationDelay(3 * 60 * 60), periodicVentilationTime(0), humidityReadDelay(30), highHumidityThreshold(55), veryHighHumidityThreshold(65), humidityHysteresis(5), maxWorkTime(30 * 60), minDelayTime(60 * 60), nightStartHour(23), nightEndHour(6), useHighGear(false), ventAutoMode(true), ventEnabled(false) {}
+  VentConfig() : periodicVentilationDelay(3 * 60 * 60), periodicVentilationTime(10 * 60), humidityReadDelay(20), highHumidityThreshold(55), veryHighHumidityThreshold(65), humidityHysteresis(5), minWorkTime(30 * 60), maxWorkTime(30 * 60), minDelayTime(30 * 60), nightStartHour(23), nightEndHour(6), useHighGear(false), ventAutoMode(true), ventEnabled(false) {}
   ~VentConfig() {}
 
   Json getJson() {
@@ -510,6 +511,7 @@ struct VentConfig {
     json["highHumidityThreshold"] = highHumidityThreshold;
     json["veryHighHumidityThreshold"] = veryHighHumidityThreshold;
     json["humidityHysteresis"] = humidityHysteresis;
+    json["minWorkTime"] = minWorkTime;
     json["maxWorkTime"] = maxWorkTime;
     json["minDelayTime"] = minDelayTime;
     json["nightStartHour"] = nightStartHour;
@@ -528,6 +530,7 @@ struct VentConfig {
     json["highHumidityThreshold"] = "Próg wilgotności powyżej którego włączamy wentylacje";
     json["veryHighHumidityThreshold"] = "Próg wilgotności powyżej którego włączamy wentylacje bez wzgledu na ograniczenia czasowe (maxWorkTime i minDelayTime)";
     json["humidityHysteresis"] = "Histereza dla wilgotności (różnica pomiędzy progiem włączania i wyłączania wentylacji)";
+    json["minWorkTime"] = "Minimalny czas pracy wentylacji w sekundach (dotyczy tylko veryHighHumidityThreshold)";
     json["maxWorkTime"] = "Maksymalny czas pracy wentylacji w sekundach (jeśli wentylacja jest włączona, to po tym czasie zostanie wyłączona, jeśli jest ponizej highHumidityThreshold)";
     json["minDelayTime"] = "Minimalny czas przerwy pomiędzy kolejnymi uruchomieniami wentylacji w sekundach (jeśli wentylacja została wyłączona, to nie może być ponownie włączona przed upływem tego czasu, chyba że wilgotność przekroczy highHumidityThreshold)";
     json["nightStartHour"] = "Godzina rozpoczęcia trybu nocnego (w trybie nocnym wentylacja jest wyłączona niezależnie od wilgotności)";
@@ -562,6 +565,10 @@ struct VentConfig {
     }
     if (request->hasParam("humidityHysteresis")) {
       humidityHysteresis = request->getParam("humidityHysteresis")->value().toFloat();
+      hasChanges = true;
+    }
+    if(request->hasParam("minWorkTime")) {
+      minWorkTime = request->getParam("minWorkTime")->value().toInt();
       hasChanges = true;
     }
     if(request->hasParam("maxWorkTime")) {
@@ -900,7 +907,7 @@ struct HeaterConfig {
   float minHourProduction140;
   int nightHours[nightHoursSize];
 
-  HeaterConfig() : minHourProduction200(2.8), numberOfHours200(3), use2Heaters200(false), numberOfHours140(5), minHourProduction140(2.5) {
+  HeaterConfig() : minHourProduction200(2.8), numberOfHours200(6), use2Heaters200(true), numberOfHours140(5), minHourProduction140(2.5) {
     for (int i = 0; i < nightHoursSize; i++) {
       nightHours[i] = 0;
     }
@@ -1579,6 +1586,87 @@ struct VentManager {
     ventStatus.setGear(false);
   }
 
+  bool checkManual() {
+    if(!ventConfig.ventAutoMode) {
+      if(ventConfig.ventEnabled) {
+        enableVent("manual mode");
+      } else {
+        disableVent("manual mode");
+      }
+      return true;
+    }
+    return false;
+  }
+
+  bool checkNight() {
+    int currentHour = DateTime.getParts().getHours();
+    if(currentHour >= ventConfig.nightStartHour || currentHour < ventConfig.nightEndHour) {
+      disableVent("night mode");
+      return true;
+    }
+    return false;
+  }
+
+  bool checkVeryHigh(float humidity) {
+    if(veryHighHumidityActive) {
+      if(humidity < ventConfig.veryHighHumidityThreshold - ventConfig.humidityHysteresis && ventEnableTime + ventConfig.minWorkTime < DateTime.getTime()) {
+        disableVent("humidity below veryHighHumidityThreshold - humidityHysteresis");
+      }
+      return true;
+    }
+
+    if(humidity > ventConfig.veryHighHumidityThreshold + ventConfig.humidityHysteresis) {
+      veryHighHumidityActive = true;
+      periodicVentilationActive = false;
+      if(ventStatus.isEnabled()) {
+        statusReason = "humidity over veryHighHumidityThreshold";
+      } else {
+        enableVent("humidity over veryHighHumidityThreshold + humidityHysteresis");
+      }
+      return true;
+    }
+    return false;
+  }
+
+  bool checkPeriodic() {
+    int currentHour = DateTime.getParts().getHours();
+    if(periodicVentilationActive) {
+      if(ventEnableTime + ventConfig.periodicVentilationTime <= DateTime.getTime()) {
+        disableVent("finished periodic ventilation");
+      } else {
+        enableVent("periodic ventilation");
+      }
+      return true;
+    }
+    if(!ventStatus.isEnabled() && ventDisableTime + ventConfig.periodicVentilationDelay < DateTime.getTime() && ventConfig.periodicVentilationTime > 0) {
+      int mHours = ventConfig.periodicVentilationDelay / 3600;
+      if(currentHour + mHours < ventConfig.nightStartHour && currentHour - mHours >= ventConfig.nightEndHour) {
+        periodicVentilationActive = true;
+        enableVent("periodic ventilation");
+        return true;
+      }
+    }
+    return false;
+  }
+
+  bool checkHigh(float humidity) {
+    if(humidity < ventConfig.highHumidityThreshold - ventConfig.humidityHysteresis) {
+      disableVent("humidity below highHumidityThreshold - humidityHysteresis");
+      return true;
+    }
+
+    if(ventStatus.isEnabled() && ventEnableTime + ventConfig.maxWorkTime < DateTime.getTime()) {
+      disableVent("maxWorkTime exceeded");
+      return true;
+    }
+
+    if(humidity > ventConfig.highHumidityThreshold + ventConfig.humidityHysteresis && ventDisableTime + ventConfig.minDelayTime < DateTime.getTime()) {
+      enableVent("humidity above highHumidityThreshold + humidityHysteresis and within time limits");
+      return true;
+    }
+    return false;
+  }
+
   public:
   void resetStats() {
     disableVent("stats reset");
@@ -1595,34 +1683,13 @@ struct VentManager {
     if(ventStatus.isEnabled()) {
       ventStatus.setGear(ventConfig.useHighGear);
     }
-    if(!ventConfig.ventAutoMode) {
-      if(ventConfig.ventEnabled) {
-        enableVent("manual mode");
-      } else {
-        disableVent("manual mode");
-      }
+    
+    if(checkManual()) {
       return;
     }
-    int currentHour = DateTime.getParts().getHours();
-    if(currentHour >= ventConfig.nightStartHour || currentHour < ventConfig.nightEndHour) {
-      disableVent("night mode");
+
+    if(checkNight()) {
       return;
-    }
-    if(periodicVentilationActive) {
-      if(ventEnableTime + ventConfig.periodicVentilationTime <= DateTime.getTime()) {
-        disableVent("periodic ventilation time exceeded");
-      } else {
-        enableVent("periodic ventilation");
-      }
-      return;
-    }
-    if(!ventStatus.isEnabled() && ventDisableTime + ventConfig.periodicVentilationDelay < DateTime.getTime() && ventConfig.periodicVentilationTime > 0) {
-      int mHours = ventConfig.periodicVentilationDelay / 3600;
-      if(currentHour + mHours < ventConfig.nightStartHour && currentHour - mHours >= ventConfig.nightEndHour) {
-        periodicVentilationActive = true;
-        enableVent("periodic ventilation");
-        return;
-      }
     }
 
     float humidity = humiditySensor.readHumidityIfNeeded();
@@ -1631,38 +1698,17 @@ struct VentManager {
       return;
     }
 
-    if(veryHighHumidityActive) {
-      if(humidity < ventConfig.veryHighHumidityThreshold - ventConfig.humidityHysteresis) {
-        disableVent("humidity below veryHighHumidityThreshold - humidityHysteresis");
-      }
+    if(checkVeryHigh(humidity)) {
+      return;
+    }
+    
+    if(checkPeriodic()) {
       return;
     }
 
-    if(humidity > ventConfig.veryHighHumidityThreshold + ventConfig.humidityHysteresis) {
-      veryHighHumidityActive = true;
-      if(ventStatus.isEnabled()) {
-        statusReason = "humidity over veryHighHumidityThreshold";
-      } else {
-        enableVent("humidity over veryHighHumidityThreshold + humidityHysteresis");
-      }
+    if(checkHigh(humidity)) {
       return;
     }
-
-    if(humidity < ventConfig.highHumidityThreshold - ventConfig.humidityHysteresis) {
-      disableVent("humidity below highHumidityThreshold - humidityHysteresis");
-      return;
-    }
-
-    if(ventStatus.isEnabled() && ventEnableTime + ventConfig.maxWorkTime < DateTime.getTime()) {
-      disableVent("maxWorkTime exceeded");
-      return;
-    }
-
-    if(humidity > ventConfig.highHumidityThreshold + ventConfig.humidityHysteresis && ventDisableTime + ventConfig.minDelayTime < DateTime.getTime()) {
-      enableVent("humidity above highHumidityThreshold + humidityHysteresis and within time limits");
-      return;
-    }
-
   }
 
   Json getJson() {
