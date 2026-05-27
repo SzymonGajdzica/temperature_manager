@@ -99,9 +99,7 @@ struct WifiManager {
   }
 
   void setupInternetConnection() {
-    WiFi.disconnect(true, true);
     delay(300);
-
     WiFi.mode(WIFI_STA);
     delay(200);
     WiFi.setAutoReconnect(true);
@@ -112,12 +110,10 @@ struct WifiManager {
     IPAddress subnet(255, 255, 0, 0); 
     IPAddress primaryDNS(8, 8, 8, 8);
     IPAddress secondaryDNS(8, 8, 4, 4); 
-
-    while (!WiFi.config(localIP, gateway, subnet, primaryDNS, secondaryDNS)) {
-        Serial.println("STA Failed to configure");
-        delay(10000);
+    if(!WiFi.config(localIP, gateway, subnet, primaryDNS, secondaryDNS)) {
+      print("STA Failed to configure");
+      return;
     }
-
     WiFi.begin("Dom", "123456789a");
   }
 
@@ -1479,6 +1475,15 @@ struct PumpManager {
       return;
     }
 
+    if(upButtonKitchen.getCurrentState()) {
+      int time = pumpConfig.getPumpOnTime(3);
+      if(time > 0) {
+        triggerCounters[3]++;
+        enablePump(time, "Up kitchen button pressed");
+        return;
+      }
+    }
+
     if(pumpDisableTime + pumpConfig.pumpDelayTime > DateTime.getTime()) {
       return;
     }
@@ -1503,14 +1508,6 @@ struct PumpManager {
       return;
     }
 
-    if(upButtonKitchen.getCurrentState()) {
-      int time = pumpConfig.getPumpOnTime(3);
-      if(time > 0) {
-        triggerCounters[3]++;
-        enablePump(time, "Up kitchen button pressed");
-        return;
-      }
-    }
     for (int i = 0; i < numberOfMoveDetectors; i++) {
       MoveDetector* moveDetector = moveDetectors[i];
       if(moveDetector->getCurrentState()) {
