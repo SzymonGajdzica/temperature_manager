@@ -15,7 +15,7 @@
 // 200L, 2KW od 50C do 70C w 140 minut
 // 140L, 2KW od 10C do 70C w 5h
 
-#define version 14
+#define version 15
 
 #define storageStartGuard 0xDEADBEEF
 #define storageEndGuard 0xBEEFDEAD
@@ -26,7 +26,7 @@
 #define hostId2 181
 
 #define loopDelay 1
-const int maxNumberOfRetries = 10;
+const int maxNumberOfRetries = 3;
 const int httpReadDelayMillis = 30 * 1000;
 const int wifiCheckDelay = 60 * 5;
 const int wifiConnectTimeoutMillis = 30 * 1000;
@@ -78,7 +78,7 @@ struct WifiManager {
     return WiFi.status() == WL_CONNECTED;
   }
 
-  void waitForWifiConnection(int timeoutMillis) {
+  bool waitForWifiConnection(int timeoutMillis) {
     print("Connecting to WiFi");
 
     unsigned long start = millis();
@@ -86,7 +86,7 @@ struct WifiManager {
     while (!isWifiConnected()) {
       if (millis() - start >= timeoutMillis) {
         println(" Failed (timeout)");
-        return;
+        return false;
       }
 
       delay(100);
@@ -96,9 +96,10 @@ struct WifiManager {
     println(" Connected!");
     print("IP address: ");
     println(WiFi.localIP().toString());
+    return true;
   }
 
-  void setupInternetConnection() {
+  bool setupInternetConnection() {
     delay(300);
     WiFi.mode(WIFI_STA);
     delay(200);
@@ -112,16 +113,18 @@ struct WifiManager {
     IPAddress secondaryDNS(8, 8, 4, 4); 
     if(!WiFi.config(localIP, gateway, subnet, primaryDNS, secondaryDNS)) {
       print("STA Failed to configure");
-      return;
+      return false;
     }
     WiFi.begin("Dom", "123456789a");
+    return true;
   }
 
   void setupLocalTime() {
     DateTime.setTimeZone("CET-1CEST,M3.5.0,M10.5.0/3");
     println("Fetching current time from server");
     while(!DateTime.isTimeValid()) {
-      if(!DateTime.begin(20000)) {
+      ensureConnection();
+      if(!DateTime.begin(httpReadDelayMillis)) {
         println("Failed to fetch current time from server");
         delay(httpReadDelayMillis);
       }
@@ -135,8 +138,6 @@ struct WifiManager {
   ~WifiManager() {}
 
   void begin() {
-    setupInternetConnection();
-    waitForWifiConnection(wifiConnectTimeoutMillis);
     setupLocalTime();
   }
 
@@ -161,8 +162,12 @@ struct WifiManager {
 
   bool ensureConnection() {
     if(!isWifiConnected()) {
-      setupInternetConnection();
-      waitForWifiConnection(wifiConnectTimeoutMillis);
+      if(!setupInternetConnection()) {
+        return false;
+      }
+      if(!waitForWifiConnection(wifiConnectTimeoutMillis)) {
+        return false;
+      }
     }
     return isWifiConnected();
   }
@@ -315,6 +320,50 @@ struct Button {
 Button upButtonKitchen = Button(upButtonPin, "Przuycisk kuchnia gora");
 
 struct OtherParams {
+  private:
+  bool isSetupFinished = false;
+  bool isLoopStarted = false;
+
+  String getResetReason() {
+    switch (esp_reset_reason()) {
+        case ESP_RST_UNKNOWN:
+            return "Nieznany powód resetu";
+
+        case ESP_RST_POWERON:
+            return "Włączenie zasilania - ESP32 został uruchomiony po podaniu zasilania";
+
+        case ESP_RST_EXT:
+            return "Reset zewnętrzny - reset wywołany sygnałem zewnętrznym lub przyciskiem RESET";
+
+        case ESP_RST_SW:
+            return "Reset programowy - restart został wywołany przez oprogramowanie";
+
+        case ESP_RST_PANIC:
+            return "Awaria programu - wystąpił krytyczny błąd, wyjątek lub crash";
+
+        case ESP_RST_INT_WDT:
+            return "Watchdog przerwania - obsługa przerwania trwała zbyt długo";
+
+        case ESP_RST_TASK_WDT:
+            return "Watchdog zadania - jedno z zadań było zablokowane przez zbyt długi czas";
+
+        case ESP_RST_WDT:
+            return "Watchdog - ESP32 przestał odpowiadać i został automatycznie zresetowany";
+
+        case ESP_RST_DEEPSLEEP:
+            return "Wybudzenie z Deep Sleep - ESP32 uruchomił się po trybie głębokiego uśpienia";
+
+        case ESP_RST_BROWNOUT:
+            return "Spadek napięcia - napięcie zasilania było zbyt niskie i ESP32 został zresetowany";
+
+        case ESP_RST_SDIO:
+            return "Reset przez SDIO - reset został wywołany przez interfejs SDIO";
+
+        default:
+            return "Inny lub nierozpoznany powód resetu";
+    }
+  }
+
   public:
   OtherParams() {}
   ~OtherParams() {}
@@ -325,6 +374,9 @@ struct OtherParams {
     json["bootTime"] = DateTimeParts::from(DateTime.getBootTime()).toString();
     json["version"] = String(version);
     json["lastWifiDisconnectTime"] = DateTimeParts::from(wifiManager.getLastDisconnectTime()).toString();
+    json["isSetupFinished"] = isSetupFinished;
+    json["isLoopStarted"] = isLoopStarted;
+    json["resetReason"] = getResetReason();
     return json;
   }
 
@@ -334,7 +386,18 @@ struct OtherParams {
     json["bootTime"] = "Czas uruchomienia urządzenia";
     json["version"] = "Wersja oprogramowania urządzenia";
     json["lastWifiDisconnectTime"] = "Czas ostatniego rozłączenia z siecią WiFi";
+    json["isSetupFinished"] = "Czy zakończono procedurę setup";
+    json["isLoopStarted"] = "Czy rozpoczęto procedurę loop";
+    json["resetReason"] = "Przyczyna ostatniego resetu";
     return json;
+  }
+
+  void finishedSetup() {
+    isSetupFinished = true;
+  }
+
+  void startedLoop() {
+    isLoopStarted = true;
   }
 
 };
@@ -1892,10 +1955,13 @@ void setup() {
   temperatureSensor.begin();
   humiditySensor.begin();
   initializeLocalStorage();
-  wifiManager.begin();
   setupServer();
-  println("Finished setup waiting 120 secs to start loop");
-  delay(120000);
+  wifiManager.begin();
+  otherParams.finishedSetup();
+  println("Finished setup waiting 60 secs to start loop");
+  delay(60000);
+  println("Starting loop");
+  otherParams.startedLoop();
 }
 
 void loop() {
