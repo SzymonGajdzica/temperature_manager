@@ -119,6 +119,10 @@ struct WifiManager {
     return true;
   }
 
+  public:
+  WifiManager() {}
+  ~WifiManager() {}
+
   void setupLocalTime() {
     DateTime.setTimeZone("CET-1CEST,M3.5.0,M10.5.0/3");
     println("Fetching current time from server");
@@ -133,12 +137,11 @@ struct WifiManager {
     println(DateTime.toString());
   }
 
-  public:
-  WifiManager() {}
-  ~WifiManager() {}
-
   void begin() {
-    setupLocalTime();
+    while(!ensureConnection()) {
+      println("Failed to setup internet connection");
+      delay(httpReadDelayMillis);
+    }
   }
 
   time_t getLastDisconnectTime() {
@@ -259,6 +262,57 @@ Switch heater140Switch = Switch(heater140Pin, "Grzałka 140L");
 
 
 AsyncWebServer server(80);
+
+struct Led {
+  private:
+  int pin;
+  String name;
+  bool currentState;
+  public:
+  Led(int pin, String name) : pin(pin), name(name), currentState(false){ }
+  ~Led() {}
+
+  void begin() {
+    pinMode(pin, OUTPUT);
+    digitalWrite(pin, LOW);
+  }
+
+  void setState(bool newState) {
+    if (currentState != newState) {
+      currentState = newState;
+      digitalWrite(pin, currentState ? HIGH : LOW);
+    }
+  }
+
+  void toggle() {
+    setState(!currentState);
+  }
+
+  bool getState() {
+    return currentState;
+  }
+
+  String getName() {
+    return name;
+  }
+
+  Json getJson() {
+    Json json;
+    json["name"] = name;
+    json["currentState"] = currentState;
+    return json;
+  }
+
+  Json getDocumentationJson() {
+    Json json;
+    json["name"] = "Nazwa diody LED";
+    json["currentState"] = "Aktualny stan diody LED (true - włączona)";
+    return json;
+  }
+
+};
+
+Led systemLed = Led(LED_BUILTIN, "Dioda systemowa");
 
 struct Button {
   private:
@@ -1937,7 +1991,19 @@ void initializeLocalStorage() {
   }
 }
 
+void checkSystemLed() {
+  static unsigned long lastCycle = 0;
+  unsigned long elapsed = millis() - lastCycle;
+  if (elapsed >= 5000) {
+    lastCycle = millis();
+    systemLed.setState(true);
+  } else if (elapsed >= 500) {
+    systemLed.setState(false);
+  }
+}
+
 void setup() {
+  systemLed.begin();
   heater140Switch.begin();
   heater200Switch1.begin();
   heater200Switch2.begin();
@@ -1955,11 +2021,15 @@ void setup() {
   temperatureSensor.begin();
   humiditySensor.begin();
   initializeLocalStorage();
-  setupServer();
   wifiManager.begin();
+  setupServer();
+  wifiManager.setupLocalTime();
   otherParams.finishedSetup();
   println("Finished setup waiting 60 secs to start loop");
-  delay(60000);
+  for (int i = 0; i < 120; i++) {
+    systemLed.toggle();
+    delay(500);
+  }
   println("Starting loop");
   otherParams.startedLoop();
 }
@@ -1979,5 +2049,6 @@ void loop() {
   if(heaterStatus.shouldUpdateHeaters()) {
     productionPlansManager.executeProductionPlan();
   }
+  checkSystemLed();
   delay(loopDelay);
 }
