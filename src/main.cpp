@@ -10,12 +10,13 @@
 #include <DallasTemperature.h>
 #include <Bounce2.h>
 #include <SHT4x.h>
+#include <sys/time.h>
 
 // 200L, 4KW od 50C do 70C w 70 minut
 // 200L, 2KW od 50C do 70C w 140 minut
 // 140L, 2KW od 10C do 70C w 5h
 
-#define version 15
+#define version 16
 
 #define storageStartGuard 0xDEADBEEF
 #define storageEndGuard 0xBEEFDEAD
@@ -73,6 +74,7 @@ struct WifiManager {
   private:
   time_t disconnectTime;
   time_t lastDisconnectTime;
+  time_t backupTime;
 
   bool isWifiConnected() {
     return WiFi.status() == WL_CONNECTED;
@@ -118,6 +120,16 @@ struct WifiManager {
     WiFi.begin("Dom", "123456789a");
     return true;
   }
+  
+  void applyBackupTimeIfPossible() {
+    if(backupTime > 0 && DateTime.setTime(backupTime)) {
+      struct timeval time;
+      time.tv_sec = backupTime;
+      time.tv_usec = 0;
+      settimeofday(&time, nullptr);
+      println("Applied backup time: " + DateTime.getParts().toString());
+    }
+  }
 
   public:
   WifiManager() {}
@@ -131,6 +143,7 @@ struct WifiManager {
       if(!DateTime.begin(httpReadDelayMillis)) {
         println("Failed to fetch current time from server");
         delay(httpReadDelayMillis);
+        applyBackupTimeIfPossible();
       }
     }
     print("Fetched current time from server ");
@@ -142,6 +155,10 @@ struct WifiManager {
       println("Failed to setup internet connection");
       delay(httpReadDelayMillis);
     }
+  }
+
+  void setBackupTime(time_t time) {
+    backupTime = time;
   }
 
   time_t getLastDisconnectTime() {
@@ -1873,6 +1890,7 @@ void setupServer() {
     edpointsJson.push(getDocResponse("force_update_plans", "Forces update of production plans"));
     edpointsJson.push(getDocResponse("reset_config", "Reset all config to default values"));
     edpointsJson.push(getDocResponse("reset_stats", "Reset all statistics"));
+    edpointsJson.push(getDocResponse("set_backup_time", "Set backup time for wifi manager. For example /set_backup_time?time=1699999999. Current time at https://www.epochconverter.com/"));
 
     Json resultJson;
     resultJson["edpoints"] = edpointsJson;
@@ -1968,6 +1986,21 @@ void setupServer() {
     pumpManager.resetStats();
     Json resultJson;
     resultJson["message"] = "Stats reseted";
+    request->send(200, "application/json", resultJson.toString());
+  });
+
+  server.on("/set_backup_time", HTTP_GET, [](AsyncWebServerRequest *request){
+    time_t backupTime;
+    if (request->hasParam("time")) {
+      backupTime = request->getParam("time")->value().toInt();
+    }
+    Json resultJson;
+    if(backupTime > 0) {
+      wifiManager.setBackupTime(backupTime);
+      resultJson["message"] = "Backup time set to " + DateTimeParts::from(backupTime).toString();
+    } else {
+      resultJson["message"] = "Set 'time' param to valid unix timestamp, https://www.epochconverter.com/";
+    }
     request->send(200, "application/json", resultJson.toString());
   });
 
