@@ -16,7 +16,7 @@
 // 200L, 2KW od 50C do 70C w 140 minut
 // 140L, 2KW od 10C do 70C w 5h
 
-#define version 16
+#define version 17
 
 #define storageStartGuard 0xDEADBEEF
 #define storageEndGuard 0xBEEFDEAD
@@ -2047,6 +2047,7 @@ void setup() {
   middleMoveDetector.begin();
   upMoveDetector.begin();
   upButtonKitchen.begin();
+  systemLed.setState(true);
   Serial.begin(9600);
   while (!Serial)
     delay(100);
